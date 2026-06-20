@@ -791,6 +791,185 @@ g_car.right.target_counts
 - `S7` 触发时，`left_target_counts > right_target_counts`
 - 如果方向反了，先检查 `g_line.error` 方向，再检查循迹修正方向
 
+## Ozone Data 图像观察
+
+Ozone 不只能看变量数值，也可以把变量加入 Data 窗口画曲线。调 PID 时，曲线比单个数字更直观，因为 PID 调得好不好主要看“响应过程”：有没有跟上、有没有过冲、有没有抖动、有没有长期偏差。
+
+### 程序是否正常运行
+
+建议画：
+
+```c
+g_car.control_tick
+g_line.sample_tick
+```
+
+正常图像：
+
+- 两条曲线都持续上升
+- 不会突然停止
+
+异常图像：
+
+- 曲线停止不动：程序停住了，可能进了 HardFault、Error_Handler，或者 Ozone 暂停了 CPU
+- `control_tick` 增加但 `sample_tick` 不增加：循迹读取没有正常执行
+
+### 循迹输入图像
+
+建议画：
+
+```c
+g_line.error
+g_line.active_count
+g_line.line_seen
+g_line.active_mask
+```
+
+正常图像：
+
+- 黑线在中间时，`g_line.error` 接近 `0`
+- 黑线往左偏时，`g_line.error` 变成正数
+- 黑线往右偏时，`g_line.error` 变成负数
+- 有黑线时，`g_line.line_seen = 1`
+- 白底或丢线时，`g_line.line_seen = 0`
+
+调好标准：
+
+- 黑线从左到右移动时，`error` 曲线能按 `50 -> 33 -> 16 -> 0 -> -16 -> -33 -> -50` 的方向变化
+- `active_count` 和实际压住的探头数量一致
+- `active_mask` 和实际探头位置一致
+
+异常图像：
+
+- 白底时 `line_seen` 一直为 `1`：黑白电平可能反了，检查 `g_line.active_low`
+- 黑线移动时 `error` 方向反了：S1~S7 接线顺序或权重方向有问题
+- `error` 大幅乱跳：传感器离地高度、黑线宽度、光照或接线可能有问题
+
+### 电机速度 PID 图像
+
+建议左轮画一组：
+
+```c
+g_car.left.target_counts
+g_car.left.measured_counts
+g_car.left.pwm_output
+```
+
+右轮画一组：
+
+```c
+g_car.right.target_counts
+g_car.right.measured_counts
+g_car.right.pwm_output
+```
+
+正常图像：
+
+- `target_counts` 是目标线
+- `measured_counts` 应该跟着 `target_counts` 走
+- `pwm_output` 起步时会变大，速度接近目标后会回落到稳定值
+
+调好标准：
+
+- `target_counts = 10` 时，`measured_counts` 能稳定在 `8 ~ 12`
+- 改变 `target_counts` 后，`measured_counts` 能较快跟上
+- `measured_counts` 不长期为 0
+- `pwm_output` 不长期顶在最大值
+- 左右轮的 `measured_counts` 不应差太多
+
+异常图像和原因：
+
+- `target_counts` 有值，但 `measured_counts = 0`：电机没转、编码器没反馈、PWM 太小或驱动没使能
+- `pwm_output` 很大但 `measured_counts` 上不去：电机驱动能力不够、电池电压低、机械阻力大，或者 PID 输出已经顶满
+- `measured_counts` 明显慢慢爬上去：响应慢，可以增加电机速度 PID 的 `kp`
+- `measured_counts` 上下振荡：`kp` 可能太大，或者需要少量 `kd`
+- `measured_counts` 稳定低于目标：可以适当增加 `ki`
+
+### 循迹 PID 图像
+
+建议画：
+
+```c
+g_line.error
+g_car.line.correction_counts
+g_car.line.left_target_counts
+g_car.line.right_target_counts
+g_car.left.measured_counts
+g_car.right.measured_counts
+```
+
+正常图像：
+
+- `g_line.error` 偏左为正，偏右为负
+- `correction_counts` 应跟着 `error` 同方向变化
+- 黑线偏左时，`right_target_counts` 高于 `left_target_counts`
+- 黑线偏右时，`left_target_counts` 高于 `right_target_counts`
+- 黑线回到中间时，左右目标速度重新接近
+
+调好标准：
+
+- 直道时 `error` 在 0 附近小范围变化
+- 直道时左右目标速度差不大
+- 入弯时 `correction_counts` 能及时增大
+- 出弯后 `correction_counts` 能回到接近 0
+- 车不会一直左右大幅摆动
+
+异常图像和原因：
+
+- `error` 已经很大，但 `correction_counts` 很小：循迹 `kp` 太小或 `output_limit` 太小
+- `correction_counts` 经常顶到 `output_limit`：弯道需求超过当前限幅，或者速度太快
+- `correction_counts` 来回大幅正负跳：`kp` 太大，或者传感器输入抖动
+- `error` 回到 0 后车还继续甩：`kd` 太小，或者速度太快
+
+### 直角弯图像
+
+建议画：
+
+```c
+g_line.active_mask
+g_line.right_angle_detected
+g_line.right_angle_direction
+g_line.error
+g_car.line.correction_counts
+g_car.line.left_target_counts
+g_car.line.right_target_counts
+```
+
+正常图像：
+
+- 左直角时，`active_mask` 可能出现 `15`
+- 右直角时，`active_mask` 可能出现 `120`
+- 触发直角增强时，`right_angle_detected = 1`
+- 左直角时，`right_angle_direction = 1`
+- 右直角时，`right_angle_direction = -1`
+- 直角增强触发后，`g_line.error` 会被增强到 `+50` 或 `-50`
+
+调好标准：
+
+- 直角弯前后 `right_angle_detected` 能短暂变成 `1`
+- `correction_counts` 能迅速变大
+- 左右目标速度差明显拉开
+- 车能转过直角，出弯后 `error` 回到 0 附近
+
+异常图像和原因：
+
+- `active_mask` 到了 `15/120`，但 `right_angle_detected` 没有变成 `1`：检查 `g_line.right_angle_enable`
+- `right_angle_detected = 1`，但车还是转不过去：增大 `output_limit`，或降低 `base_counts`
+- 直角后左右摆得厉害：适当增加 `kd`，或者减小 `kp`
+- 普通曲线变差：可以临时设置 `g_line.right_angle_enable = 0` 对比测试
+
+### 最终算调好的图像状态
+
+可以认为调得比较好了，如果 Data 图像满足这些条件：
+
+- 程序计数曲线持续运行，不会停止
+- 传感器 `error` 方向正确，中心附近接近 0
+- 电机 `measured_counts` 能跟上 `target_counts`
+- 循迹时 `correction_counts` 不会长期顶满
+- 直道时 `error` 和 `correction_counts` 小幅波动
+- 弯道时 `correction_counts` 能及时增大，出弯后能回落
+- 直角弯时 `right_angle_detected` 能触发，车能转过去
+
 ## 调参原则
 
 ### 先调什么
