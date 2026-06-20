@@ -1,0 +1,2126 @@
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 1
+
+
+   1              		.cpu cortex-m3
+   2              		.arch armv7-m
+   3              		.fpu softvfp
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 1
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"car_control.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.file 1 "Core/Src/car_control.c"
+  18              		.section	.text.Car_LimitPwm,"ax",%progbits
+  19              		.align	1
+  20              		.syntax unified
+  21              		.thumb
+  22              		.thumb_func
+  24              	Car_LimitPwm:
+  25              	.LVL0:
+  26              	.LFB69:
+   1:Core/Src/car_control.c **** /* USER CODE BEGIN Header */
+   2:Core/Src/car_control.c **** /**
+   3:Core/Src/car_control.c ****   ******************************************************************************
+   4:Core/Src/car_control.c ****   * @file           : car_control.c
+   5:Core/Src/car_control.c ****   * @brief          : Two motor speed PID control for TB6612 encoder car.
+   6:Core/Src/car_control.c ****   ******************************************************************************
+   7:Core/Src/car_control.c ****   */
+   8:Core/Src/car_control.c **** /* USER CODE END Header */
+   9:Core/Src/car_control.c **** 
+  10:Core/Src/car_control.c **** #include "car_control.h"
+  11:Core/Src/car_control.c **** #include "line_tracker.h"
+  12:Core/Src/car_control.c **** 
+  13:Core/Src/car_control.c **** volatile CarControl_t g_car =
+  14:Core/Src/car_control.c **** {
+  15:Core/Src/car_control.c ****   .mode = CAR_MODE_OPEN_LOOP,      //小车控制模式。0=禁用停车，1=开环PWM，2=速度PI
+  16:Core/Src/car_control.c ****   .control_period_ms = CAR_CONTROL_PERIOD_MS,     //控制周期，单位毫秒。这个值需要�
+  17:Core/Src/car_control.c ****   .control_tick = 0U,              //控制周期计数。TIM4 每 10ms 加 1，用来判断程序�
+  18:Core/Src/car_control.c ****   .driver_enabled = 0U,           //驱动使能状态。0=禁用，1=使能。禁用时电机不�
+  19:Core/Src/car_control.c ****   .left =
+  20:Core/Src/car_control.c ****   {
+  21:Core/Src/car_control.c ****     .pid =
+  22:Core/Src/car_control.c ****     {
+  23:Core/Src/car_control.c ****       .kp = 180,
+  24:Core/Src/car_control.c ****       .ki = 0.7,
+  25:Core/Src/car_control.c ****       .kd = 4,
+  26:Core/Src/car_control.c ****       .integral = 3199,                               //PID积分初始值。这个值需要根据�
+  27:Core/Src/car_control.c ****       .previous_error = 0.0f,                         //PID初始参数。这个值需要根据实�
+  28:Core/Src/car_control.c ****       .output_limit = CAR_PID_OUTPUT_MAX,             //PID输出限幅。这个值需要根据实�
+  29:Core/Src/car_control.c ****       .integral_limit = CAR_PID_INTEGRAL_MAX,         //PID输出限幅和积分限幅。这个值�
+  30:Core/Src/car_control.c ****     },
+  31:Core/Src/car_control.c ****     .target_counts = 45,            //速度目标，单位是每控制周期的编码器计数增�
+  32:Core/Src/car_control.c ****     .measured_counts = 0,           //速度测量，单位同上。每个控制周期更新一次
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 2
+
+
+  33:Core/Src/car_control.c ****     .encoder_delta = 0,             //编码器增量，单位是编码器计数。每个控制周�
+  34:Core/Src/car_control.c ****     .encoder_total = 0,           //编码器总计数，单位是编码器计数。上电或复位
+  35:Core/Src/car_control.c ****     .encoder_raw = 0,             //编码器原始计数值，单位是编码器计数。上电或
+  36:Core/Src/car_control.c ****     .encoder_last = 0,             //编码器上一个周期的计数值，单位是编码器计�
+  37:Core/Src/car_control.c ****     .manual_pwm = 2600,            //开环控制时的PWM值，范围-1000~1000，正负表示转�
+  38:Core/Src/car_control.c ****     .pwm_output = 0,               //最终输出的PWM值，范围-1000~1000，正负表示转向�
+  39:Core/Src/car_control.c ****     .invert_motor = 1,          //电机反转标志。0=不反转，1=反转。反转后正PWM变�
+  40:Core/Src/car_control.c ****     .invert_encoder = 0U,       //编码器反转标志。0=不反转，1=反转。反转后编码�
+  41:Core/Src/car_control.c ****   },
+  42:Core/Src/car_control.c ****   .right =
+  43:Core/Src/car_control.c ****   {
+  44:Core/Src/car_control.c ****     .pid =
+  45:Core/Src/car_control.c ****     {
+  46:Core/Src/car_control.c ****       .kp = 400,
+  47:Core/Src/car_control.c ****       .ki = 0.6,
+  48:Core/Src/car_control.c ****       .kd = 40,
+  49:Core/Src/car_control.c ****       .integral = 3199,
+  50:Core/Src/car_control.c ****       .previous_error = 0.0f,
+  51:Core/Src/car_control.c ****       .output_limit = CAR_PID_OUTPUT_MAX,
+  52:Core/Src/car_control.c ****       .integral_limit = CAR_PID_INTEGRAL_MAX,
+  53:Core/Src/car_control.c ****     },
+  54:Core/Src/car_control.c ****     .target_counts = 46,
+  55:Core/Src/car_control.c ****     .measured_counts = 0,
+  56:Core/Src/car_control.c ****     .encoder_delta = 0,
+  57:Core/Src/car_control.c ****     .encoder_total = 0,
+  58:Core/Src/car_control.c ****     .encoder_raw = 0,
+  59:Core/Src/car_control.c ****     .encoder_last = 0,
+  60:Core/Src/car_control.c ****     .manual_pwm = 2600,
+  61:Core/Src/car_control.c ****     .pwm_output = 0,
+  62:Core/Src/car_control.c ****     .invert_motor = 1,
+  63:Core/Src/car_control.c ****     .invert_encoder = 1,
+  64:Core/Src/car_control.c ****   },
+  65:Core/Src/car_control.c ****   .line =
+  66:Core/Src/car_control.c ****   {
+  67:Core/Src/car_control.c ****     .pid =
+  68:Core/Src/car_control.c ****     {
+  69:Core/Src/car_control.c ****       .kp = 1.3f,
+  70:Core/Src/car_control.c ****       .ki = 0.08f,
+  71:Core/Src/car_control.c ****       .kd = 0.2f,
+  72:Core/Src/car_control.c ****       .integral = 0.0f,
+  73:Core/Src/car_control.c ****       .previous_error = 0.0f,
+  74:Core/Src/car_control.c ****       .output_limit = 30.0f,
+  75:Core/Src/car_control.c ****       .integral_limit = 1000.0f,
+  76:Core/Src/car_control.c ****     },
+  77:Core/Src/car_control.c ****     .base_counts = 46,
+  78:Core/Src/car_control.c ****     .correction_counts = 0,
+  79:Core/Src/car_control.c ****     .left_target_counts = 0,
+  80:Core/Src/car_control.c ****     .right_target_counts = 0,
+  81:Core/Src/car_control.c ****     .line_lost_stop = 1U,
+  82:Core/Src/car_control.c ****   },
+  83:Core/Src/car_control.c **** };
+  84:Core/Src/car_control.c **** 
+  85:Core/Src/car_control.c **** static int16_t Car_LimitPwm(int32_t pwm);
+  86:Core/Src/car_control.c **** static float Car_AbsFloat(float value);
+  87:Core/Src/car_control.c **** static float Car_LimitFloat(float value, float limit);
+  88:Core/Src/car_control.c **** static int16_t Car_PidStep(volatile CarMotor_t *motor);
+  89:Core/Src/car_control.c **** static int32_t Car_LinePidStep(int32_t error);
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 3
+
+
+  90:Core/Src/car_control.c **** static void Car_ResetPid(volatile CarMotor_t *motor);
+  91:Core/Src/car_control.c **** static void Car_ResetLinePid(void);
+  92:Core/Src/car_control.c **** static void Car_UpdateEncoder(volatile CarMotor_t *motor, TIM_HandleTypeDef *htim);
+  93:Core/Src/car_control.c **** static void Car_SetDriverEnable(uint8_t enable);
+  94:Core/Src/car_control.c **** static void Car_ApplyMotor(volatile CarMotor_t *motor,
+  95:Core/Src/car_control.c ****                            TIM_HandleTypeDef *htim,
+  96:Core/Src/car_control.c ****                            uint32_t channel,
+  97:Core/Src/car_control.c ****                            GPIO_TypeDef *in1_port,
+  98:Core/Src/car_control.c ****                            uint16_t in1_pin,
+  99:Core/Src/car_control.c ****                            GPIO_TypeDef *in2_port,
+ 100:Core/Src/car_control.c ****                            uint16_t in2_pin);
+ 101:Core/Src/car_control.c **** 
+ 102:Core/Src/car_control.c **** void Car_Init(void)
+ 103:Core/Src/car_control.c **** {
+ 104:Core/Src/car_control.c ****   HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
+ 105:Core/Src/car_control.c ****   HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
+ 106:Core/Src/car_control.c ****   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+ 107:Core/Src/car_control.c ****   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
+ 108:Core/Src/car_control.c **** 
+ 109:Core/Src/car_control.c ****   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, 0U);
+ 110:Core/Src/car_control.c ****   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 0U);
+ 111:Core/Src/car_control.c **** 
+ 112:Core/Src/car_control.c ****   __HAL_TIM_SET_COUNTER(&htim1, 0U);
+ 113:Core/Src/car_control.c ****   __HAL_TIM_SET_COUNTER(&htim2, 0U);
+ 114:Core/Src/car_control.c **** 
+ 115:Core/Src/car_control.c ****   g_car.left.encoder_last = 0;
+ 116:Core/Src/car_control.c ****   g_car.right.encoder_last = 0;
+ 117:Core/Src/car_control.c ****   g_car.left.encoder_raw = 0;
+ 118:Core/Src/car_control.c ****   g_car.right.encoder_raw = 0;
+ 119:Core/Src/car_control.c **** 
+ 120:Core/Src/car_control.c ****   Car_Stop();
+ 121:Core/Src/car_control.c ****   HAL_TIM_Base_Start_IT(&htim4);
+ 122:Core/Src/car_control.c **** }
+ 123:Core/Src/car_control.c **** 
+ 124:Core/Src/car_control.c **** void Car_ControlStep(void)
+ 125:Core/Src/car_control.c **** {
+ 126:Core/Src/car_control.c ****   int16_t left_pwm = 0;
+ 127:Core/Src/car_control.c ****   int16_t right_pwm = 0;
+ 128:Core/Src/car_control.c **** 
+ 129:Core/Src/car_control.c ****   g_car.control_tick++;
+ 130:Core/Src/car_control.c **** 
+ 131:Core/Src/car_control.c ****   Car_UpdateEncoder(&g_car.left, &htim1);
+ 132:Core/Src/car_control.c ****   Car_UpdateEncoder(&g_car.right, &htim2);
+ 133:Core/Src/car_control.c ****   LineTracker_Update();
+ 134:Core/Src/car_control.c **** 
+ 135:Core/Src/car_control.c ****   switch (g_car.mode)
+ 136:Core/Src/car_control.c ****   {
+ 137:Core/Src/car_control.c ****     case CAR_MODE_OPEN_LOOP:
+ 138:Core/Src/car_control.c ****       left_pwm = Car_LimitPwm(g_car.left.manual_pwm);
+ 139:Core/Src/car_control.c ****       right_pwm = Car_LimitPwm(g_car.right.manual_pwm);
+ 140:Core/Src/car_control.c ****       break;
+ 141:Core/Src/car_control.c **** 
+ 142:Core/Src/car_control.c ****     case CAR_MODE_SPEED_PID:
+ 143:Core/Src/car_control.c ****       left_pwm = Car_PidStep(&g_car.left);
+ 144:Core/Src/car_control.c ****       right_pwm = Car_PidStep(&g_car.right);
+ 145:Core/Src/car_control.c ****       break;
+ 146:Core/Src/car_control.c **** 
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 4
+
+
+ 147:Core/Src/car_control.c ****     case CAR_MODE_LINE_FOLLOW:
+ 148:Core/Src/car_control.c ****       if ((g_line.line_seen != 0U) || (g_car.line.line_lost_stop == 0U))
+ 149:Core/Src/car_control.c ****       {
+ 150:Core/Src/car_control.c ****         int32_t correction = Car_LinePidStep((int32_t)g_line.error);
+ 151:Core/Src/car_control.c ****         int32_t left_target = g_car.line.base_counts - correction;
+ 152:Core/Src/car_control.c ****         int32_t right_target = g_car.line.base_counts + correction;
+ 153:Core/Src/car_control.c **** 
+ 154:Core/Src/car_control.c ****         g_car.line.correction_counts = correction;
+ 155:Core/Src/car_control.c ****         g_car.line.left_target_counts = left_target;
+ 156:Core/Src/car_control.c ****         g_car.line.right_target_counts = right_target;
+ 157:Core/Src/car_control.c ****         g_car.left.target_counts = left_target;
+ 158:Core/Src/car_control.c ****         g_car.right.target_counts = right_target;
+ 159:Core/Src/car_control.c **** 
+ 160:Core/Src/car_control.c ****         left_pwm = Car_PidStep(&g_car.left);
+ 161:Core/Src/car_control.c ****         right_pwm = Car_PidStep(&g_car.right);
+ 162:Core/Src/car_control.c ****       }
+ 163:Core/Src/car_control.c ****       else
+ 164:Core/Src/car_control.c ****       {
+ 165:Core/Src/car_control.c ****         g_car.line.correction_counts = 0;
+ 166:Core/Src/car_control.c ****         g_car.line.left_target_counts = 0;
+ 167:Core/Src/car_control.c ****         g_car.line.right_target_counts = 0;
+ 168:Core/Src/car_control.c ****         g_car.left.target_counts = 0;
+ 169:Core/Src/car_control.c ****         g_car.right.target_counts = 0;
+ 170:Core/Src/car_control.c ****         Car_ResetLinePid();
+ 171:Core/Src/car_control.c ****         Car_ResetPid(&g_car.left);
+ 172:Core/Src/car_control.c ****         Car_ResetPid(&g_car.right);
+ 173:Core/Src/car_control.c ****         left_pwm = 0;
+ 174:Core/Src/car_control.c ****         right_pwm = 0;
+ 175:Core/Src/car_control.c ****       }
+ 176:Core/Src/car_control.c ****       break;
+ 177:Core/Src/car_control.c **** 
+ 178:Core/Src/car_control.c ****     case CAR_MODE_DISABLED:
+ 179:Core/Src/car_control.c ****     default:
+ 180:Core/Src/car_control.c ****       Car_ResetLinePid();
+ 181:Core/Src/car_control.c ****       Car_ResetPid(&g_car.left);
+ 182:Core/Src/car_control.c ****       Car_ResetPid(&g_car.right);
+ 183:Core/Src/car_control.c ****       left_pwm = 0;
+ 184:Core/Src/car_control.c ****       right_pwm = 0;
+ 185:Core/Src/car_control.c ****       break;
+ 186:Core/Src/car_control.c ****   }
+ 187:Core/Src/car_control.c **** 
+ 188:Core/Src/car_control.c ****   g_car.left.pwm_output = left_pwm;
+ 189:Core/Src/car_control.c ****   g_car.right.pwm_output = right_pwm;
+ 190:Core/Src/car_control.c **** 
+ 191:Core/Src/car_control.c ****   if (g_car.mode == CAR_MODE_DISABLED)
+ 192:Core/Src/car_control.c ****   {
+ 193:Core/Src/car_control.c ****     Car_SetDriverEnable(0U);
+ 194:Core/Src/car_control.c ****   }
+ 195:Core/Src/car_control.c ****   else
+ 196:Core/Src/car_control.c ****   {
+ 197:Core/Src/car_control.c ****     Car_SetDriverEnable(1U);
+ 198:Core/Src/car_control.c ****   }
+ 199:Core/Src/car_control.c **** 
+ 200:Core/Src/car_control.c ****   Car_ApplyMotor(&g_car.left,
+ 201:Core/Src/car_control.c ****                  &htim3,
+ 202:Core/Src/car_control.c ****                  TIM_CHANNEL_1,
+ 203:Core/Src/car_control.c ****                  AIN1_GPIO_Port,
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 5
+
+
+ 204:Core/Src/car_control.c ****                  AIN1_Pin,
+ 205:Core/Src/car_control.c ****                  AIN2_GPIO_Port,
+ 206:Core/Src/car_control.c ****                  AIN2_Pin);
+ 207:Core/Src/car_control.c ****   Car_ApplyMotor(&g_car.right,
+ 208:Core/Src/car_control.c ****                  &htim3,
+ 209:Core/Src/car_control.c ****                  TIM_CHANNEL_2,
+ 210:Core/Src/car_control.c ****                  BIN1_GPIO_Port,
+ 211:Core/Src/car_control.c ****                  BIN1_Pin,
+ 212:Core/Src/car_control.c ****                  BIN2_GPIO_Port,
+ 213:Core/Src/car_control.c ****                  BIN2_Pin);
+ 214:Core/Src/car_control.c **** }
+ 215:Core/Src/car_control.c **** 
+ 216:Core/Src/car_control.c **** void Car_Stop(void)
+ 217:Core/Src/car_control.c **** {
+ 218:Core/Src/car_control.c ****   g_car.mode = CAR_MODE_DISABLED;
+ 219:Core/Src/car_control.c ****   g_car.left.target_counts = 0;
+ 220:Core/Src/car_control.c ****   g_car.right.target_counts = 0;
+ 221:Core/Src/car_control.c ****   g_car.left.manual_pwm = 0;
+ 222:Core/Src/car_control.c ****   g_car.right.manual_pwm = 0;
+ 223:Core/Src/car_control.c ****   g_car.left.pwm_output = 0;
+ 224:Core/Src/car_control.c ****   g_car.right.pwm_output = 0;
+ 225:Core/Src/car_control.c ****   Car_ResetPid(&g_car.left);
+ 226:Core/Src/car_control.c ****   Car_ResetPid(&g_car.right);
+ 227:Core/Src/car_control.c ****   Car_SetDriverEnable(0U);
+ 228:Core/Src/car_control.c ****   Car_ApplyMotor(&g_car.left, &htim3, TIM_CHANNEL_1, AIN1_GPIO_Port, AIN1_Pin, AIN2_GPIO_Port, AIN2
+ 229:Core/Src/car_control.c ****   Car_ApplyMotor(&g_car.right, &htim3, TIM_CHANNEL_2, BIN1_GPIO_Port, BIN1_Pin, BIN2_GPIO_Port, BIN
+ 230:Core/Src/car_control.c **** }
+ 231:Core/Src/car_control.c **** 
+ 232:Core/Src/car_control.c **** void Car_SetSpeedTargets(int32_t left_counts, int32_t right_counts)
+ 233:Core/Src/car_control.c **** {
+ 234:Core/Src/car_control.c ****   g_car.left.target_counts = left_counts;
+ 235:Core/Src/car_control.c ****   g_car.right.target_counts = right_counts;
+ 236:Core/Src/car_control.c ****   g_car.mode = CAR_MODE_SPEED_PID;
+ 237:Core/Src/car_control.c **** }
+ 238:Core/Src/car_control.c **** 
+ 239:Core/Src/car_control.c **** static int16_t Car_LimitPwm(int32_t pwm)
+ 240:Core/Src/car_control.c **** {
+  27              		.loc 1 240 1 view -0
+  28              		.cfi_startproc
+  29              		@ args = 0, pretend = 0, frame = 0
+  30              		@ frame_needed = 0, uses_anonymous_args = 0
+  31              		@ link register save eliminated.
+ 241:Core/Src/car_control.c ****   if (pwm > CAR_PWM_MAX)
+  32              		.loc 1 241 3 view .LVU1
+  33              		.loc 1 241 6 is_stmt 0 view .LVU2
+  34 0000 B0F5486F 		cmp	r0, #3200
+  35 0004 04DA     		bge	.L3
+ 242:Core/Src/car_control.c ****   {
+ 243:Core/Src/car_control.c ****     return CAR_PWM_MAX;
+ 244:Core/Src/car_control.c ****   }
+ 245:Core/Src/car_control.c **** 
+ 246:Core/Src/car_control.c ****   if (pwm < -CAR_PWM_MAX)
+  36              		.loc 1 246 3 is_stmt 1 view .LVU3
+  37              		.loc 1 246 6 is_stmt 0 view .LVU4
+  38 0006 10F5486F 		cmn	r0, #3200
+  39 000a 04DD     		ble	.L4
+ 247:Core/Src/car_control.c ****   {
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 6
+
+
+ 248:Core/Src/car_control.c ****     return -CAR_PWM_MAX;
+ 249:Core/Src/car_control.c ****   }
+ 250:Core/Src/car_control.c **** 
+ 251:Core/Src/car_control.c ****   return (int16_t)pwm;
+  40              		.loc 1 251 3 is_stmt 1 view .LVU5
+  41              		.loc 1 251 10 is_stmt 0 view .LVU6
+  42 000c 00B2     		sxth	r0, r0
+  43              	.LVL1:
+  44              		.loc 1 251 10 view .LVU7
+  45 000e 7047     		bx	lr
+  46              	.LVL2:
+  47              	.L3:
+ 243:Core/Src/car_control.c ****   }
+  48              		.loc 1 243 12 view .LVU8
+  49 0010 40F67F40 		movw	r0, #3199
+  50              	.LVL3:
+ 243:Core/Src/car_control.c ****   }
+  51              		.loc 1 243 12 view .LVU9
+  52 0014 7047     		bx	lr
+  53              	.LVL4:
+  54              	.L4:
+ 248:Core/Src/car_control.c ****   }
+  55              		.loc 1 248 12 view .LVU10
+  56 0016 0148     		ldr	r0, .L5
+  57              	.LVL5:
+ 252:Core/Src/car_control.c **** }
+  58              		.loc 1 252 1 view .LVU11
+  59 0018 7047     		bx	lr
+  60              	.L6:
+  61 001a 00BF     		.align	2
+  62              	.L5:
+  63 001c 81F3FFFF 		.word	-3199
+  64              		.cfi_endproc
+  65              	.LFE69:
+  67              		.global	__aeabi_fcmplt
+  68              		.section	.text.Car_AbsFloat,"ax",%progbits
+  69              		.align	1
+  70              		.syntax unified
+  71              		.thumb
+  72              		.thumb_func
+  74              	Car_AbsFloat:
+  75              	.LVL6:
+  76              	.LFB70:
+ 253:Core/Src/car_control.c **** 
+ 254:Core/Src/car_control.c **** static float Car_AbsFloat(float value)
+ 255:Core/Src/car_control.c **** {
+  77              		.loc 1 255 1 is_stmt 1 view -0
+  78              		.cfi_startproc
+  79              		@ args = 0, pretend = 0, frame = 0
+  80              		@ frame_needed = 0, uses_anonymous_args = 0
+  81              		.loc 1 255 1 is_stmt 0 view .LVU13
+  82 0000 10B5     		push	{r4, lr}
+  83              	.LCFI0:
+  84              		.cfi_def_cfa_offset 8
+  85              		.cfi_offset 4, -8
+  86              		.cfi_offset 14, -4
+  87 0002 0446     		mov	r4, r0
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 7
+
+
+ 256:Core/Src/car_control.c ****   return (value < 0.0f) ? -value : value;
+  88              		.loc 1 256 3 is_stmt 1 view .LVU14
+  89              		.loc 1 256 34 is_stmt 0 view .LVU15
+  90 0004 0021     		movs	r1, #0
+  91 0006 FFF7FEFF 		bl	__aeabi_fcmplt
+  92              	.LVL7:
+  93              		.loc 1 256 34 view .LVU16
+  94 000a 08B9     		cbnz	r0, .L12
+  95              	.LVL8:
+  96              	.L8:
+ 257:Core/Src/car_control.c **** }
+  97              		.loc 1 257 1 view .LVU17
+  98 000c 2046     		mov	r0, r4
+  99 000e 10BD     		pop	{r4, pc}
+ 100              	.LVL9:
+ 101              	.L12:
+ 256:Core/Src/car_control.c ****   return (value < 0.0f) ? -value : value;
+ 102              		.loc 1 256 34 discriminator 1 view .LVU18
+ 103 0010 04F10044 		add	r4, r4, #-2147483648
+ 104              	.LVL10:
+ 256:Core/Src/car_control.c ****   return (value < 0.0f) ? -value : value;
+ 105              		.loc 1 256 34 discriminator 1 view .LVU19
+ 106 0014 FAE7     		b	.L8
+ 107              		.cfi_endproc
+ 108              	.LFE70:
+ 110              		.global	__aeabi_fcmple
+ 111              		.global	__aeabi_fcmpgt
+ 112              		.section	.text.Car_LimitFloat,"ax",%progbits
+ 113              		.align	1
+ 114              		.syntax unified
+ 115              		.thumb
+ 116              		.thumb_func
+ 118              	Car_LimitFloat:
+ 119              	.LVL11:
+ 120              	.LFB71:
+ 258:Core/Src/car_control.c **** 
+ 259:Core/Src/car_control.c **** static float Car_LimitFloat(float value, float limit)
+ 260:Core/Src/car_control.c **** {
+ 121              		.loc 1 260 1 is_stmt 1 view -0
+ 122              		.cfi_startproc
+ 123              		@ args = 0, pretend = 0, frame = 0
+ 124              		@ frame_needed = 0, uses_anonymous_args = 0
+ 125              		.loc 1 260 1 is_stmt 0 view .LVU21
+ 126 0000 38B5     		push	{r3, r4, r5, lr}
+ 127              	.LCFI1:
+ 128              		.cfi_def_cfa_offset 16
+ 129              		.cfi_offset 3, -16
+ 130              		.cfi_offset 4, -12
+ 131              		.cfi_offset 5, -8
+ 132              		.cfi_offset 14, -4
+ 133 0002 0546     		mov	r5, r0
+ 261:Core/Src/car_control.c ****   float positive_limit = Car_AbsFloat(limit);
+ 134              		.loc 1 261 3 is_stmt 1 view .LVU22
+ 135              		.loc 1 261 26 is_stmt 0 view .LVU23
+ 136 0004 0846     		mov	r0, r1
+ 137              	.LVL12:
+ 138              		.loc 1 261 26 view .LVU24
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 8
+
+
+ 139 0006 FFF7FEFF 		bl	Car_AbsFloat
+ 140              	.LVL13:
+ 141              		.loc 1 261 26 view .LVU25
+ 142 000a 0446     		mov	r4, r0
+ 143              	.LVL14:
+ 262:Core/Src/car_control.c **** 
+ 263:Core/Src/car_control.c ****   if (positive_limit <= 0.0f)
+ 144              		.loc 1 263 3 is_stmt 1 view .LVU26
+ 145              		.loc 1 263 6 is_stmt 0 view .LVU27
+ 146 000c 0021     		movs	r1, #0
+ 147 000e FFF7FEFF 		bl	__aeabi_fcmple
+ 148              	.LVL15:
+ 149              		.loc 1 263 6 view .LVU28
+ 150 0012 70B9     		cbnz	r0, .L15
+ 264:Core/Src/car_control.c ****   {
+ 265:Core/Src/car_control.c ****     return 0.0f;
+ 266:Core/Src/car_control.c ****   }
+ 267:Core/Src/car_control.c **** 
+ 268:Core/Src/car_control.c ****   if (value > positive_limit)
+ 151              		.loc 1 268 3 is_stmt 1 view .LVU29
+ 152              		.loc 1 268 6 is_stmt 0 view .LVU30
+ 153 0014 2946     		mov	r1, r5
+ 154 0016 2046     		mov	r0, r4
+ 155 0018 FFF7FEFF 		bl	__aeabi_fcmplt
+ 156              	.LVL16:
+ 157 001c 38B9     		cbnz	r0, .L13
+ 269:Core/Src/car_control.c ****   {
+ 270:Core/Src/car_control.c ****     return positive_limit;
+ 271:Core/Src/car_control.c ****   }
+ 272:Core/Src/car_control.c **** 
+ 273:Core/Src/car_control.c ****   if (value < -positive_limit)
+ 158              		.loc 1 273 3 is_stmt 1 view .LVU31
+ 159              		.loc 1 273 15 is_stmt 0 view .LVU32
+ 160 001e 04F10040 		add	r0, r4, #-2147483648
+ 161 0022 0446     		mov	r4, r0
+ 162              	.LVL17:
+ 163              		.loc 1 273 6 view .LVU33
+ 164 0024 2946     		mov	r1, r5
+ 165 0026 FFF7FEFF 		bl	__aeabi_fcmpgt
+ 166              	.LVL18:
+ 167 002a 00B9     		cbnz	r0, .L13
+ 274:Core/Src/car_control.c ****   {
+ 275:Core/Src/car_control.c ****     return -positive_limit;
+ 276:Core/Src/car_control.c ****   }
+ 277:Core/Src/car_control.c **** 
+ 278:Core/Src/car_control.c ****   return value;
+ 168              		.loc 1 278 10 view .LVU34
+ 169 002c 2C46     		mov	r4, r5
+ 170              	.L13:
+ 279:Core/Src/car_control.c **** }
+ 171              		.loc 1 279 1 view .LVU35
+ 172 002e 2046     		mov	r0, r4
+ 173 0030 38BD     		pop	{r3, r4, r5, pc}
+ 174              	.LVL19:
+ 175              	.L15:
+ 265:Core/Src/car_control.c ****   }
+ 176              		.loc 1 265 12 view .LVU36
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 9
+
+
+ 177 0032 0024     		movs	r4, #0
+ 178              	.LVL20:
+ 265:Core/Src/car_control.c ****   }
+ 179              		.loc 1 265 12 view .LVU37
+ 180 0034 FBE7     		b	.L13
+ 181              		.cfi_endproc
+ 182              	.LFE71:
+ 184              		.global	__aeabi_i2f
+ 185              		.global	__aeabi_fsub
+ 186              		.global	__aeabi_fadd
+ 187              		.global	__aeabi_fmul
+ 188              		.global	__aeabi_f2iz
+ 189              		.section	.text.Car_PidStep,"ax",%progbits
+ 190              		.align	1
+ 191              		.syntax unified
+ 192              		.thumb
+ 193              		.thumb_func
+ 195              	Car_PidStep:
+ 196              	.LVL21:
+ 197              	.LFB72:
+ 280:Core/Src/car_control.c **** 
+ 281:Core/Src/car_control.c **** static int16_t Car_PidStep(volatile CarMotor_t *motor)
+ 282:Core/Src/car_control.c **** {
+ 198              		.loc 1 282 1 is_stmt 1 view -0
+ 199              		.cfi_startproc
+ 200              		@ args = 0, pretend = 0, frame = 0
+ 201              		@ frame_needed = 0, uses_anonymous_args = 0
+ 202              		.loc 1 282 1 is_stmt 0 view .LVU39
+ 203 0000 F8B5     		push	{r3, r4, r5, r6, r7, lr}
+ 204              	.LCFI2:
+ 205              		.cfi_def_cfa_offset 24
+ 206              		.cfi_offset 3, -24
+ 207              		.cfi_offset 4, -20
+ 208              		.cfi_offset 5, -16
+ 209              		.cfi_offset 6, -12
+ 210              		.cfi_offset 7, -8
+ 211              		.cfi_offset 14, -4
+ 212 0002 0446     		mov	r4, r0
+ 283:Core/Src/car_control.c ****   float error = (float)motor->target_counts - (float)motor->measured_counts;
+ 213              		.loc 1 283 3 is_stmt 1 view .LVU40
+ 214              		.loc 1 283 29 is_stmt 0 view .LVU41
+ 215 0004 C069     		ldr	r0, [r0, #28]
+ 216              	.LVL22:
+ 217              		.loc 1 283 17 view .LVU42
+ 218 0006 FFF7FEFF 		bl	__aeabi_i2f
+ 219              	.LVL23:
+ 220 000a 0546     		mov	r5, r0
+ 221              		.loc 1 283 59 view .LVU43
+ 222 000c 206A     		ldr	r0, [r4, #32]
+ 223              		.loc 1 283 47 view .LVU44
+ 224 000e FFF7FEFF 		bl	__aeabi_i2f
+ 225              	.LVL24:
+ 226 0012 0146     		mov	r1, r0
+ 227              		.loc 1 283 9 view .LVU45
+ 228 0014 2846     		mov	r0, r5
+ 229 0016 FFF7FEFF 		bl	__aeabi_fsub
+ 230              	.LVL25:
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 10
+
+
+ 231 001a 0546     		mov	r5, r0
+ 232              	.LVL26:
+ 284:Core/Src/car_control.c ****   float derivative = error - motor->pid.previous_error;
+ 233              		.loc 1 284 3 is_stmt 1 view .LVU46
+ 234              		.loc 1 284 40 is_stmt 0 view .LVU47
+ 235 001c 2169     		ldr	r1, [r4, #16]	@ float
+ 236              		.loc 1 284 9 view .LVU48
+ 237 001e FFF7FEFF 		bl	__aeabi_fsub
+ 238              	.LVL27:
+ 239              		.loc 1 284 9 view .LVU49
+ 240 0022 0746     		mov	r7, r0
+ 241              	.LVL28:
+ 285:Core/Src/car_control.c ****   float output = 0.0f;
+ 242              		.loc 1 285 3 is_stmt 1 view .LVU50
+ 286:Core/Src/car_control.c **** 
+ 287:Core/Src/car_control.c ****   motor->pid.integral += error;
+ 243              		.loc 1 287 3 view .LVU51
+ 244              		.loc 1 287 13 is_stmt 0 view .LVU52
+ 245 0024 E068     		ldr	r0, [r4, #12]	@ float
+ 246              	.LVL29:
+ 247              		.loc 1 287 23 view .LVU53
+ 248 0026 2946     		mov	r1, r5
+ 249 0028 FFF7FEFF 		bl	__aeabi_fadd
+ 250              	.LVL30:
+ 251 002c E060     		str	r0, [r4, #12]	@ float
+ 288:Core/Src/car_control.c ****   motor->pid.integral = Car_LimitFloat(motor->pid.integral, motor->pid.integral_limit);
+ 252              		.loc 1 288 3 is_stmt 1 view .LVU54
+ 253              		.loc 1 288 50 is_stmt 0 view .LVU55
+ 254 002e E068     		ldr	r0, [r4, #12]	@ float
+ 255              		.loc 1 288 71 view .LVU56
+ 256 0030 A169     		ldr	r1, [r4, #24]	@ float
+ 257              		.loc 1 288 25 view .LVU57
+ 258 0032 FFF7FEFF 		bl	Car_LimitFloat
+ 259              	.LVL31:
+ 260              		.loc 1 288 23 discriminator 1 view .LVU58
+ 261 0036 E060     		str	r0, [r4, #12]	@ float
+ 289:Core/Src/car_control.c **** 
+ 290:Core/Src/car_control.c ****   output = (motor->pid.kp * error) +
+ 262              		.loc 1 290 3 is_stmt 1 view .LVU59
+ 263              		.loc 1 290 23 is_stmt 0 view .LVU60
+ 264 0038 2068     		ldr	r0, [r4]	@ float
+ 265              		.loc 1 290 27 view .LVU61
+ 266 003a 2946     		mov	r1, r5
+ 267 003c FFF7FEFF 		bl	__aeabi_fmul
+ 268              	.LVL32:
+ 269 0040 0646     		mov	r6, r0
+ 291:Core/Src/car_control.c ****            (motor->pid.ki * motor->pid.integral) +
+ 270              		.loc 1 291 23 view .LVU62
+ 271 0042 6068     		ldr	r0, [r4, #4]	@ float
+ 272              		.loc 1 291 39 view .LVU63
+ 273 0044 E168     		ldr	r1, [r4, #12]	@ float
+ 274              		.loc 1 291 27 view .LVU64
+ 275 0046 FFF7FEFF 		bl	__aeabi_fmul
+ 276              	.LVL33:
+ 277 004a 0146     		mov	r1, r0
+ 290:Core/Src/car_control.c ****            (motor->pid.ki * motor->pid.integral) +
+ 278              		.loc 1 290 36 view .LVU65
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 11
+
+
+ 279 004c 3046     		mov	r0, r6
+ 280 004e FFF7FEFF 		bl	__aeabi_fadd
+ 281              	.LVL34:
+ 282 0052 0646     		mov	r6, r0
+ 292:Core/Src/car_control.c ****            (motor->pid.kd * derivative);
+ 283              		.loc 1 292 23 view .LVU66
+ 284 0054 A068     		ldr	r0, [r4, #8]	@ float
+ 285              		.loc 1 292 27 view .LVU67
+ 286 0056 3946     		mov	r1, r7
+ 287 0058 FFF7FEFF 		bl	__aeabi_fmul
+ 288              	.LVL35:
+ 289 005c 0146     		mov	r1, r0
+ 290:Core/Src/car_control.c ****            (motor->pid.ki * motor->pid.integral) +
+ 290              		.loc 1 290 10 view .LVU68
+ 291 005e 3046     		mov	r0, r6
+ 292 0060 FFF7FEFF 		bl	__aeabi_fadd
+ 293              	.LVL36:
+ 293:Core/Src/car_control.c **** 
+ 294:Core/Src/car_control.c ****   motor->pid.previous_error = error;
+ 294              		.loc 1 294 3 is_stmt 1 view .LVU69
+ 295              		.loc 1 294 29 is_stmt 0 view .LVU70
+ 296 0064 2561     		str	r5, [r4, #16]	@ float
+ 295:Core/Src/car_control.c ****   output = Car_LimitFloat(output, motor->pid.output_limit);
+ 297              		.loc 1 295 3 is_stmt 1 view .LVU71
+ 298              		.loc 1 295 45 is_stmt 0 view .LVU72
+ 299 0066 6169     		ldr	r1, [r4, #20]	@ float
+ 300              		.loc 1 295 12 view .LVU73
+ 301 0068 FFF7FEFF 		bl	Car_LimitFloat
+ 302              	.LVL37:
+ 296:Core/Src/car_control.c **** 
+ 297:Core/Src/car_control.c ****   return Car_LimitPwm((int32_t)output);
+ 303              		.loc 1 297 3 is_stmt 1 view .LVU74
+ 304              		.loc 1 297 10 is_stmt 0 view .LVU75
+ 305 006c FFF7FEFF 		bl	__aeabi_f2iz
+ 306              	.LVL38:
+ 307              		.loc 1 297 10 view .LVU76
+ 308 0070 FFF7FEFF 		bl	Car_LimitPwm
+ 309              	.LVL39:
+ 298:Core/Src/car_control.c **** }
+ 310              		.loc 1 298 1 view .LVU77
+ 311 0074 F8BD     		pop	{r3, r4, r5, r6, r7, pc}
+ 312              		.loc 1 298 1 view .LVU78
+ 313              		.cfi_endproc
+ 314              	.LFE72:
+ 316              		.section	.text.Car_LinePidStep,"ax",%progbits
+ 317              		.align	1
+ 318              		.syntax unified
+ 319              		.thumb
+ 320              		.thumb_func
+ 322              	Car_LinePidStep:
+ 323              	.LVL40:
+ 324              	.LFB73:
+ 299:Core/Src/car_control.c **** 
+ 300:Core/Src/car_control.c **** static int32_t Car_LinePidStep(int32_t error_counts)
+ 301:Core/Src/car_control.c **** {
+ 325              		.loc 1 301 1 is_stmt 1 view -0
+ 326              		.cfi_startproc
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 12
+
+
+ 327              		@ args = 0, pretend = 0, frame = 0
+ 328              		@ frame_needed = 0, uses_anonymous_args = 0
+ 329              		.loc 1 301 1 is_stmt 0 view .LVU80
+ 330 0000 F8B5     		push	{r3, r4, r5, r6, r7, lr}
+ 331              	.LCFI3:
+ 332              		.cfi_def_cfa_offset 24
+ 333              		.cfi_offset 3, -24
+ 334              		.cfi_offset 4, -20
+ 335              		.cfi_offset 5, -16
+ 336              		.cfi_offset 6, -12
+ 337              		.cfi_offset 7, -8
+ 338              		.cfi_offset 14, -4
+ 302:Core/Src/car_control.c ****   volatile CarPid_t *pid = &g_car.line.pid;
+ 339              		.loc 1 302 3 is_stmt 1 view .LVU81
+ 340              	.LVL41:
+ 303:Core/Src/car_control.c ****   float error = (float)error_counts;
+ 341              		.loc 1 303 3 view .LVU82
+ 342              		.loc 1 303 9 is_stmt 0 view .LVU83
+ 343 0002 FFF7FEFF 		bl	__aeabi_i2f
+ 344              	.LVL42:
+ 345              		.loc 1 303 9 view .LVU84
+ 346 0006 0546     		mov	r5, r0
+ 347              	.LVL43:
+ 304:Core/Src/car_control.c ****   float derivative = error - pid->previous_error;
+ 348              		.loc 1 304 3 is_stmt 1 view .LVU85
+ 349              		.loc 1 304 33 is_stmt 0 view .LVU86
+ 350 0008 1B4C     		ldr	r4, .L21
+ 351 000a D4F89010 		ldr	r1, [r4, #144]	@ float
+ 352              		.loc 1 304 9 view .LVU87
+ 353 000e FFF7FEFF 		bl	__aeabi_fsub
+ 354              	.LVL44:
+ 355              		.loc 1 304 9 view .LVU88
+ 356 0012 0746     		mov	r7, r0
+ 357              	.LVL45:
+ 305:Core/Src/car_control.c ****   float output = 0.0f;
+ 358              		.loc 1 305 3 is_stmt 1 view .LVU89
+ 306:Core/Src/car_control.c **** 
+ 307:Core/Src/car_control.c ****   pid->integral += error;
+ 359              		.loc 1 307 3 view .LVU90
+ 360              		.loc 1 307 6 is_stmt 0 view .LVU91
+ 361 0014 D4F88C00 		ldr	r0, [r4, #140]	@ float
+ 362              	.LVL46:
+ 363              		.loc 1 307 17 view .LVU92
+ 364 0018 2946     		mov	r1, r5
+ 365 001a FFF7FEFF 		bl	__aeabi_fadd
+ 366              	.LVL47:
+ 367 001e C4F88C00 		str	r0, [r4, #140]	@ float
+ 308:Core/Src/car_control.c ****   pid->integral = Car_LimitFloat(pid->integral, pid->integral_limit);
+ 368              		.loc 1 308 3 is_stmt 1 view .LVU93
+ 369              		.loc 1 308 37 is_stmt 0 view .LVU94
+ 370 0022 D4F88C00 		ldr	r0, [r4, #140]	@ float
+ 371              		.loc 1 308 52 view .LVU95
+ 372 0026 D4F89810 		ldr	r1, [r4, #152]	@ float
+ 373              		.loc 1 308 19 view .LVU96
+ 374 002a FFF7FEFF 		bl	Car_LimitFloat
+ 375              	.LVL48:
+ 376              		.loc 1 308 17 discriminator 1 view .LVU97
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 13
+
+
+ 377 002e C4F88C00 		str	r0, [r4, #140]	@ float
+ 309:Core/Src/car_control.c **** 
+ 310:Core/Src/car_control.c ****   output = (pid->kp * error) +
+ 378              		.loc 1 310 3 is_stmt 1 view .LVU98
+ 379              		.loc 1 310 16 is_stmt 0 view .LVU99
+ 380 0032 D4F88000 		ldr	r0, [r4, #128]	@ float
+ 381              		.loc 1 310 21 view .LVU100
+ 382 0036 2946     		mov	r1, r5
+ 383 0038 FFF7FEFF 		bl	__aeabi_fmul
+ 384              	.LVL49:
+ 385 003c 0646     		mov	r6, r0
+ 311:Core/Src/car_control.c ****            (pid->ki * pid->integral) +
+ 386              		.loc 1 311 16 view .LVU101
+ 387 003e D4F88400 		ldr	r0, [r4, #132]	@ float
+ 388              		.loc 1 311 26 view .LVU102
+ 389 0042 D4F88C10 		ldr	r1, [r4, #140]	@ float
+ 390              		.loc 1 311 21 view .LVU103
+ 391 0046 FFF7FEFF 		bl	__aeabi_fmul
+ 392              	.LVL50:
+ 393 004a 0146     		mov	r1, r0
+ 310:Core/Src/car_control.c ****            (pid->ki * pid->integral) +
+ 394              		.loc 1 310 30 view .LVU104
+ 395 004c 3046     		mov	r0, r6
+ 396 004e FFF7FEFF 		bl	__aeabi_fadd
+ 397              	.LVL51:
+ 398 0052 0646     		mov	r6, r0
+ 312:Core/Src/car_control.c ****            (pid->kd * derivative);
+ 399              		.loc 1 312 16 view .LVU105
+ 400 0054 D4F88800 		ldr	r0, [r4, #136]	@ float
+ 401              		.loc 1 312 21 view .LVU106
+ 402 0058 3946     		mov	r1, r7
+ 403 005a FFF7FEFF 		bl	__aeabi_fmul
+ 404              	.LVL52:
+ 405 005e 0146     		mov	r1, r0
+ 310:Core/Src/car_control.c ****            (pid->ki * pid->integral) +
+ 406              		.loc 1 310 10 view .LVU107
+ 407 0060 3046     		mov	r0, r6
+ 408 0062 FFF7FEFF 		bl	__aeabi_fadd
+ 409              	.LVL53:
+ 313:Core/Src/car_control.c **** 
+ 314:Core/Src/car_control.c ****   pid->previous_error = error;
+ 410              		.loc 1 314 3 is_stmt 1 view .LVU108
+ 411              		.loc 1 314 23 is_stmt 0 view .LVU109
+ 412 0066 C4F89050 		str	r5, [r4, #144]	@ float
+ 315:Core/Src/car_control.c ****   output = Car_LimitFloat(output, pid->output_limit);
+ 413              		.loc 1 315 3 is_stmt 1 view .LVU110
+ 414              		.loc 1 315 38 is_stmt 0 view .LVU111
+ 415 006a D4F89410 		ldr	r1, [r4, #148]	@ float
+ 416              		.loc 1 315 12 view .LVU112
+ 417 006e FFF7FEFF 		bl	Car_LimitFloat
+ 418              	.LVL54:
+ 316:Core/Src/car_control.c **** 
+ 317:Core/Src/car_control.c ****   return (int32_t)output;
+ 419              		.loc 1 317 3 is_stmt 1 view .LVU113
+ 420              		.loc 1 317 10 is_stmt 0 view .LVU114
+ 421 0072 FFF7FEFF 		bl	__aeabi_f2iz
+ 422              	.LVL55:
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 14
+
+
+ 318:Core/Src/car_control.c **** }
+ 423              		.loc 1 318 1 view .LVU115
+ 424 0076 F8BD     		pop	{r3, r4, r5, r6, r7, pc}
+ 425              	.LVL56:
+ 426              	.L22:
+ 427              		.loc 1 318 1 view .LVU116
+ 428              		.align	2
+ 429              	.L21:
+ 430 0078 00000000 		.word	g_car
+ 431              		.cfi_endproc
+ 432              	.LFE73:
+ 434              		.section	.text.Car_ResetPid,"ax",%progbits
+ 435              		.align	1
+ 436              		.syntax unified
+ 437              		.thumb
+ 438              		.thumb_func
+ 440              	Car_ResetPid:
+ 441              	.LVL57:
+ 442              	.LFB74:
+ 319:Core/Src/car_control.c **** 
+ 320:Core/Src/car_control.c **** static void Car_ResetPid(volatile CarMotor_t *motor)
+ 321:Core/Src/car_control.c **** {
+ 443              		.loc 1 321 1 is_stmt 1 view -0
+ 444              		.cfi_startproc
+ 445              		@ args = 0, pretend = 0, frame = 0
+ 446              		@ frame_needed = 0, uses_anonymous_args = 0
+ 447              		@ link register save eliminated.
+ 322:Core/Src/car_control.c ****   motor->pid.integral = 0.0f;
+ 448              		.loc 1 322 3 view .LVU118
+ 449              		.loc 1 322 23 is_stmt 0 view .LVU119
+ 450 0000 0023     		movs	r3, #0
+ 451 0002 C360     		str	r3, [r0, #12]	@ float
+ 323:Core/Src/car_control.c ****   motor->pid.previous_error = 0.0f;
+ 452              		.loc 1 323 3 is_stmt 1 view .LVU120
+ 453              		.loc 1 323 29 is_stmt 0 view .LVU121
+ 454 0004 0361     		str	r3, [r0, #16]	@ float
+ 324:Core/Src/car_control.c **** }
+ 455              		.loc 1 324 1 view .LVU122
+ 456 0006 7047     		bx	lr
+ 457              		.cfi_endproc
+ 458              	.LFE74:
+ 460              		.section	.text.Car_ResetLinePid,"ax",%progbits
+ 461              		.align	1
+ 462              		.syntax unified
+ 463              		.thumb
+ 464              		.thumb_func
+ 466              	Car_ResetLinePid:
+ 467              	.LFB75:
+ 325:Core/Src/car_control.c **** 
+ 326:Core/Src/car_control.c **** static void Car_ResetLinePid(void)
+ 327:Core/Src/car_control.c **** {
+ 468              		.loc 1 327 1 is_stmt 1 view -0
+ 469              		.cfi_startproc
+ 470              		@ args = 0, pretend = 0, frame = 0
+ 471              		@ frame_needed = 0, uses_anonymous_args = 0
+ 472              		@ link register save eliminated.
+ 328:Core/Src/car_control.c ****   g_car.line.pid.integral = 0.0f;
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 15
+
+
+ 473              		.loc 1 328 3 view .LVU124
+ 474              		.loc 1 328 27 is_stmt 0 view .LVU125
+ 475 0000 034B     		ldr	r3, .L25
+ 476 0002 0022     		movs	r2, #0
+ 477 0004 C3F88C20 		str	r2, [r3, #140]	@ float
+ 329:Core/Src/car_control.c ****   g_car.line.pid.previous_error = 0.0f;
+ 478              		.loc 1 329 3 is_stmt 1 view .LVU126
+ 479              		.loc 1 329 33 is_stmt 0 view .LVU127
+ 480 0008 C3F89020 		str	r2, [r3, #144]	@ float
+ 330:Core/Src/car_control.c **** }
+ 481              		.loc 1 330 1 view .LVU128
+ 482 000c 7047     		bx	lr
+ 483              	.L26:
+ 484 000e 00BF     		.align	2
+ 485              	.L25:
+ 486 0010 00000000 		.word	g_car
+ 487              		.cfi_endproc
+ 488              	.LFE75:
+ 490              		.section	.text.Car_UpdateEncoder,"ax",%progbits
+ 491              		.align	1
+ 492              		.syntax unified
+ 493              		.thumb
+ 494              		.thumb_func
+ 496              	Car_UpdateEncoder:
+ 497              	.LVL58:
+ 498              	.LFB76:
+ 331:Core/Src/car_control.c **** 
+ 332:Core/Src/car_control.c **** static void Car_UpdateEncoder(volatile CarMotor_t *motor, TIM_HandleTypeDef *htim)
+ 333:Core/Src/car_control.c **** {
+ 499              		.loc 1 333 1 is_stmt 1 view -0
+ 500              		.cfi_startproc
+ 501              		@ args = 0, pretend = 0, frame = 0
+ 502              		@ frame_needed = 0, uses_anonymous_args = 0
+ 503              		@ link register save eliminated.
+ 334:Core/Src/car_control.c ****   int16_t now = (int16_t)__HAL_TIM_GET_COUNTER(htim);
+ 504              		.loc 1 334 3 view .LVU130
+ 505              		.loc 1 334 26 is_stmt 0 view .LVU131
+ 506 0000 0B68     		ldr	r3, [r1]
+ 507 0002 5B6A     		ldr	r3, [r3, #36]
+ 508              		.loc 1 334 11 view .LVU132
+ 509 0004 19B2     		sxth	r1, r3
+ 510              	.LVL59:
+ 335:Core/Src/car_control.c ****   int16_t delta16 = (int16_t)(now - motor->encoder_last);
+ 511              		.loc 1 335 3 is_stmt 1 view .LVU133
+ 512              		.loc 1 335 42 is_stmt 0 view .LVU134
+ 513 0006 C28D     		ldrh	r2, [r0, #46]
+ 514 0008 92B2     		uxth	r2, r2
+ 515              		.loc 1 335 35 view .LVU135
+ 516 000a 9B1A     		subs	r3, r3, r2
+ 517              		.loc 1 335 11 view .LVU136
+ 518 000c 1BB2     		sxth	r3, r3
+ 519              	.LVL60:
+ 336:Core/Src/car_control.c ****   int32_t delta = (int32_t)delta16;
+ 520              		.loc 1 336 3 is_stmt 1 view .LVU137
+ 337:Core/Src/car_control.c **** 
+ 338:Core/Src/car_control.c ****   motor->encoder_last = now;
+ 521              		.loc 1 338 3 view .LVU138
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 16
+
+
+ 522              		.loc 1 338 23 is_stmt 0 view .LVU139
+ 523 000e C185     		strh	r1, [r0, #46]	@ movhi
+ 339:Core/Src/car_control.c ****   motor->encoder_raw = now;
+ 524              		.loc 1 339 3 is_stmt 1 view .LVU140
+ 525              		.loc 1 339 22 is_stmt 0 view .LVU141
+ 526 0010 8185     		strh	r1, [r0, #44]	@ movhi
+ 340:Core/Src/car_control.c **** 
+ 341:Core/Src/car_control.c ****   if (motor->invert_encoder != 0U)
+ 527              		.loc 1 341 3 is_stmt 1 view .LVU142
+ 528              		.loc 1 341 12 is_stmt 0 view .LVU143
+ 529 0012 90F83520 		ldrb	r2, [r0, #53]	@ zero_extendqisi2
+ 530              		.loc 1 341 6 view .LVU144
+ 531 0016 02B1     		cbz	r2, .L28
+ 342:Core/Src/car_control.c ****   {
+ 343:Core/Src/car_control.c ****     delta = -delta;
+ 532              		.loc 1 343 5 is_stmt 1 view .LVU145
+ 533              		.loc 1 343 11 is_stmt 0 view .LVU146
+ 534 0018 5B42     		rsbs	r3, r3, #0
+ 535              	.LVL61:
+ 536              	.L28:
+ 344:Core/Src/car_control.c ****   }
+ 345:Core/Src/car_control.c **** 
+ 346:Core/Src/car_control.c ****   motor->encoder_delta = delta;
+ 537              		.loc 1 346 3 is_stmt 1 view .LVU147
+ 538              		.loc 1 346 24 is_stmt 0 view .LVU148
+ 539 001a 4362     		str	r3, [r0, #36]
+ 347:Core/Src/car_control.c ****   motor->measured_counts = delta;
+ 540              		.loc 1 347 3 is_stmt 1 view .LVU149
+ 541              		.loc 1 347 26 is_stmt 0 view .LVU150
+ 542 001c 0362     		str	r3, [r0, #32]
+ 348:Core/Src/car_control.c ****   motor->encoder_total += delta;
+ 543              		.loc 1 348 3 is_stmt 1 view .LVU151
+ 544              		.loc 1 348 8 is_stmt 0 view .LVU152
+ 545 001e 826A     		ldr	r2, [r0, #40]
+ 546              		.loc 1 348 24 view .LVU153
+ 547 0020 1344     		add	r3, r3, r2
+ 548              	.LVL62:
+ 549              		.loc 1 348 24 view .LVU154
+ 550 0022 8362     		str	r3, [r0, #40]
+ 551              	.LVL63:
+ 349:Core/Src/car_control.c **** }
+ 552              		.loc 1 349 1 view .LVU155
+ 553 0024 7047     		bx	lr
+ 554              		.cfi_endproc
+ 555              	.LFE76:
+ 557              		.section	.text.Car_SetDriverEnable,"ax",%progbits
+ 558              		.align	1
+ 559              		.syntax unified
+ 560              		.thumb
+ 561              		.thumb_func
+ 563              	Car_SetDriverEnable:
+ 564              	.LVL64:
+ 565              	.LFB77:
+ 350:Core/Src/car_control.c **** 
+ 351:Core/Src/car_control.c **** static void Car_SetDriverEnable(uint8_t enable)
+ 352:Core/Src/car_control.c **** {
+ 566              		.loc 1 352 1 is_stmt 1 view -0
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 17
+
+
+ 567              		.cfi_startproc
+ 568              		@ args = 0, pretend = 0, frame = 0
+ 569              		@ frame_needed = 0, uses_anonymous_args = 0
+ 570              		.loc 1 352 1 is_stmt 0 view .LVU157
+ 571 0000 08B5     		push	{r3, lr}
+ 572              	.LCFI4:
+ 573              		.cfi_def_cfa_offset 8
+ 574              		.cfi_offset 3, -8
+ 575              		.cfi_offset 14, -4
+ 353:Core/Src/car_control.c ****   g_car.driver_enabled = (enable != 0U) ? 1U : 0U;
+ 576              		.loc 1 353 3 is_stmt 1 view .LVU158
+ 577              		.loc 1 353 24 is_stmt 0 view .LVU159
+ 578 0002 0246     		mov	r2, r0
+ 579 0004 50B1     		cbz	r0, .L31
+ 580              		.loc 1 353 24 discriminator 1 view .LVU160
+ 581 0006 0121     		movs	r1, #1
+ 582              	.L30:
+ 583              		.loc 1 353 24 discriminator 4 view .LVU161
+ 584 0008 054B     		ldr	r3, .L33
+ 585 000a 1973     		strb	r1, [r3, #12]
+ 354:Core/Src/car_control.c ****   HAL_GPIO_WritePin(STBY_GPIO_Port,
+ 586              		.loc 1 354 3 is_stmt 1 view .LVU162
+ 587 000c 003A     		subs	r2, r2, #0
+ 588 000e 18BF     		it	ne
+ 589 0010 0122     		movne	r2, #1
+ 590 0012 0821     		movs	r1, #8
+ 591 0014 0348     		ldr	r0, .L33+4
+ 592              	.LVL65:
+ 593              		.loc 1 354 3 is_stmt 0 view .LVU163
+ 594 0016 FFF7FEFF 		bl	HAL_GPIO_WritePin
+ 595              	.LVL66:
+ 355:Core/Src/car_control.c ****                     STBY_Pin,
+ 356:Core/Src/car_control.c ****                     (enable != 0U) ? GPIO_PIN_SET : GPIO_PIN_RESET);
+ 357:Core/Src/car_control.c **** }
+ 596              		.loc 1 357 1 view .LVU164
+ 597 001a 08BD     		pop	{r3, pc}
+ 598              	.LVL67:
+ 599              	.L31:
+ 353:Core/Src/car_control.c ****   HAL_GPIO_WritePin(STBY_GPIO_Port,
+ 600              		.loc 1 353 24 discriminator 2 view .LVU165
+ 601 001c 0146     		mov	r1, r0
+ 602 001e F3E7     		b	.L30
+ 603              	.L34:
+ 604              		.align	2
+ 605              	.L33:
+ 606 0020 00000000 		.word	g_car
+ 607 0024 00080140 		.word	1073809408
+ 608              		.cfi_endproc
+ 609              	.LFE77:
+ 611              		.section	.text.Car_ApplyMotor,"ax",%progbits
+ 612              		.align	1
+ 613              		.syntax unified
+ 614              		.thumb
+ 615              		.thumb_func
+ 617              	Car_ApplyMotor:
+ 618              	.LVL68:
+ 619              	.LFB78:
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 18
+
+
+ 358:Core/Src/car_control.c **** 
+ 359:Core/Src/car_control.c **** static void Car_ApplyMotor(volatile CarMotor_t *motor,
+ 360:Core/Src/car_control.c ****                            TIM_HandleTypeDef *htim,
+ 361:Core/Src/car_control.c ****                            uint32_t channel,
+ 362:Core/Src/car_control.c ****                            GPIO_TypeDef *in1_port,
+ 363:Core/Src/car_control.c ****                            uint16_t in1_pin,
+ 364:Core/Src/car_control.c ****                            GPIO_TypeDef *in2_port,
+ 365:Core/Src/car_control.c ****                            uint16_t in2_pin)
+ 366:Core/Src/car_control.c **** {
+ 620              		.loc 1 366 1 is_stmt 1 view -0
+ 621              		.cfi_startproc
+ 622              		@ args = 12, pretend = 0, frame = 0
+ 623              		@ frame_needed = 0, uses_anonymous_args = 0
+ 624              		.loc 1 366 1 is_stmt 0 view .LVU167
+ 625 0000 F8B5     		push	{r3, r4, r5, r6, r7, lr}
+ 626              	.LCFI5:
+ 627              		.cfi_def_cfa_offset 24
+ 628              		.cfi_offset 3, -24
+ 629              		.cfi_offset 4, -20
+ 630              		.cfi_offset 5, -16
+ 631              		.cfi_offset 6, -12
+ 632              		.cfi_offset 7, -8
+ 633              		.cfi_offset 14, -4
+ 634 0002 8446     		mov	ip, r0
+ 635 0004 0E46     		mov	r6, r1
+ 636 0006 1546     		mov	r5, r2
+ 637 0008 1846     		mov	r0, r3
+ 638              	.LVL69:
+ 367:Core/Src/car_control.c ****   int16_t pwm = motor->pwm_output;
+ 639              		.loc 1 367 3 is_stmt 1 view .LVU168
+ 640              		.loc 1 367 11 is_stmt 0 view .LVU169
+ 641 000a BCF83230 		ldrh	r3, [ip, #50]
+ 642              	.LVL70:
+ 643              		.loc 1 367 11 view .LVU170
+ 644 000e 0FFA83FE 		sxth	lr, r3
+ 645              	.LVL71:
+ 368:Core/Src/car_control.c ****   uint32_t duty = 0U;
+ 646              		.loc 1 368 3 is_stmt 1 view .LVU171
+ 369:Core/Src/car_control.c ****   GPIO_PinState in1 = GPIO_PIN_RESET;
+ 647              		.loc 1 369 3 view .LVU172
+ 370:Core/Src/car_control.c ****   GPIO_PinState in2 = GPIO_PIN_RESET;
+ 648              		.loc 1 370 3 view .LVU173
+ 371:Core/Src/car_control.c **** 
+ 372:Core/Src/car_control.c ****   if (motor->invert_motor != 0U)
+ 649              		.loc 1 372 3 view .LVU174
+ 650              		.loc 1 372 12 is_stmt 0 view .LVU175
+ 651 0012 9CF83420 		ldrb	r2, [ip, #52]	@ zero_extendqisi2
+ 652              	.LVL72:
+ 653              		.loc 1 372 6 view .LVU176
+ 654 0016 12B1     		cbz	r2, .L36
+ 373:Core/Src/car_control.c ****   {
+ 374:Core/Src/car_control.c ****     pwm = (int16_t)-pwm;
+ 655              		.loc 1 374 5 is_stmt 1 view .LVU177
+ 656              		.loc 1 374 11 is_stmt 0 view .LVU178
+ 657 0018 5B42     		rsbs	r3, r3, #0
+ 658              	.LVL73:
+ 659              		.loc 1 374 9 view .LVU179
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 19
+
+
+ 660 001a 0FFA83FE 		sxth	lr, r3
+ 661              	.LVL74:
+ 662              	.L36:
+ 375:Core/Src/car_control.c ****   }
+ 376:Core/Src/car_control.c **** 
+ 377:Core/Src/car_control.c ****   if (pwm > 0)
+ 663              		.loc 1 377 3 is_stmt 1 view .LVU180
+ 664              		.loc 1 377 6 is_stmt 0 view .LVU181
+ 665 001e BEF1000F 		cmp	lr, #0
+ 666 0022 16DD     		ble	.L37
+ 378:Core/Src/car_control.c ****   {
+ 379:Core/Src/car_control.c ****     in1 = GPIO_PIN_SET;
+ 667              		.loc 1 379 5 is_stmt 1 view .LVU182
+ 668              	.LVL75:
+ 380:Core/Src/car_control.c ****     duty = (uint32_t)pwm;
+ 669              		.loc 1 380 5 view .LVU183
+ 670              		.loc 1 380 10 is_stmt 0 view .LVU184
+ 671 0024 7446     		mov	r4, lr
+ 672              	.LVL76:
+ 370:Core/Src/car_control.c **** 
+ 673              		.loc 1 370 17 view .LVU185
+ 674 0026 0027     		movs	r7, #0
+ 379:Core/Src/car_control.c ****     duty = (uint32_t)pwm;
+ 675              		.loc 1 379 9 view .LVU186
+ 676 0028 0121     		movs	r1, #1
+ 677              	.LVL77:
+ 678              	.L38:
+ 381:Core/Src/car_control.c ****   }
+ 382:Core/Src/car_control.c ****   else if (pwm < 0)
+ 383:Core/Src/car_control.c ****   {
+ 384:Core/Src/car_control.c ****     in2 = GPIO_PIN_SET;
+ 385:Core/Src/car_control.c ****     duty = (uint32_t)(-pwm);
+ 386:Core/Src/car_control.c ****   }
+ 387:Core/Src/car_control.c **** 
+ 388:Core/Src/car_control.c ****   if (g_car.mode == CAR_MODE_DISABLED)
+ 679              		.loc 1 388 3 is_stmt 1 view .LVU187
+ 680              		.loc 1 388 12 is_stmt 0 view .LVU188
+ 681 002a 184B     		ldr	r3, .L50
+ 682 002c 1B78     		ldrb	r3, [r3]	@ zero_extendqisi2
+ 683              		.loc 1 388 6 view .LVU189
+ 684 002e 03F0FF02 		and	r2, r3, #255
+ 685 0032 D3B1     		cbz	r3, .L45
+ 686 0034 0A46     		mov	r2, r1
+ 687              	.LVL78:
+ 688              	.L39:
+ 389:Core/Src/car_control.c ****   {
+ 390:Core/Src/car_control.c ****     in1 = GPIO_PIN_RESET;
+ 391:Core/Src/car_control.c ****     in2 = GPIO_PIN_RESET;
+ 392:Core/Src/car_control.c ****     duty = 0U;
+ 393:Core/Src/car_control.c ****   }
+ 394:Core/Src/car_control.c **** 
+ 395:Core/Src/car_control.c ****   HAL_GPIO_WritePin(in1_port, in1_pin, in1);
+ 689              		.loc 1 395 3 is_stmt 1 view .LVU190
+ 690 0036 BDF81810 		ldrh	r1, [sp, #24]
+ 691 003a FFF7FEFF 		bl	HAL_GPIO_WritePin
+ 692              	.LVL79:
+ 396:Core/Src/car_control.c ****   HAL_GPIO_WritePin(in2_port, in2_pin, in2);
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 20
+
+
+ 693              		.loc 1 396 3 view .LVU191
+ 694 003e 3A46     		mov	r2, r7
+ 695 0040 BDF82010 		ldrh	r1, [sp, #32]
+ 696 0044 0798     		ldr	r0, [sp, #28]
+ 697 0046 FFF7FEFF 		bl	HAL_GPIO_WritePin
+ 698              	.LVL80:
+ 397:Core/Src/car_control.c ****   __HAL_TIM_SET_COMPARE(htim, channel, duty);
+ 699              		.loc 1 397 3 view .LVU192
+ 700 004a 8DB9     		cbnz	r5, .L40
+ 701              		.loc 1 397 3 is_stmt 0 discriminator 1 view .LVU193
+ 702 004c 3368     		ldr	r3, [r6]
+ 703 004e 5C63     		str	r4, [r3, #52]
+ 704              	.L35:
+ 398:Core/Src/car_control.c **** }
+ 705              		.loc 1 398 1 view .LVU194
+ 706 0050 F8BD     		pop	{r3, r4, r5, r6, r7, pc}
+ 707              	.LVL81:
+ 708              	.L37:
+ 382:Core/Src/car_control.c ****   {
+ 709              		.loc 1 382 8 is_stmt 1 view .LVU195
+ 382:Core/Src/car_control.c ****   {
+ 710              		.loc 1 382 11 is_stmt 0 view .LVU196
+ 711 0052 BEF1000F 		cmp	lr, #0
+ 712 0056 03DB     		blt	.L47
+ 370:Core/Src/car_control.c **** 
+ 713              		.loc 1 370 17 view .LVU197
+ 714 0058 0027     		movs	r7, #0
+ 369:Core/Src/car_control.c ****   GPIO_PinState in2 = GPIO_PIN_RESET;
+ 715              		.loc 1 369 17 view .LVU198
+ 716 005a 3946     		mov	r1, r7
+ 717              	.LVL82:
+ 368:Core/Src/car_control.c ****   GPIO_PinState in1 = GPIO_PIN_RESET;
+ 718              		.loc 1 368 12 view .LVU199
+ 719 005c 3C46     		mov	r4, r7
+ 720 005e E4E7     		b	.L38
+ 721              	.LVL83:
+ 722              	.L47:
+ 384:Core/Src/car_control.c ****     duty = (uint32_t)(-pwm);
+ 723              		.loc 1 384 5 is_stmt 1 view .LVU200
+ 385:Core/Src/car_control.c ****   }
+ 724              		.loc 1 385 5 view .LVU201
+ 385:Core/Src/car_control.c ****   }
+ 725              		.loc 1 385 23 is_stmt 0 view .LVU202
+ 726 0060 CEF10004 		rsb	r4, lr, #0
+ 727              	.LVL84:
+ 384:Core/Src/car_control.c ****     duty = (uint32_t)(-pwm);
+ 728              		.loc 1 384 9 view .LVU203
+ 729 0064 0127     		movs	r7, #1
+ 369:Core/Src/car_control.c ****   GPIO_PinState in2 = GPIO_PIN_RESET;
+ 730              		.loc 1 369 17 view .LVU204
+ 731 0066 0021     		movs	r1, #0
+ 732              	.LVL85:
+ 369:Core/Src/car_control.c ****   GPIO_PinState in2 = GPIO_PIN_RESET;
+ 733              		.loc 1 369 17 view .LVU205
+ 734 0068 DFE7     		b	.L38
+ 735              	.LVL86:
+ 736              	.L45:
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 21
+
+
+ 391:Core/Src/car_control.c ****     duty = 0U;
+ 737              		.loc 1 391 9 view .LVU206
+ 738 006a 1746     		mov	r7, r2
+ 739              	.LVL87:
+ 392:Core/Src/car_control.c ****   }
+ 740              		.loc 1 392 10 view .LVU207
+ 741 006c 0024     		movs	r4, #0
+ 742              	.LVL88:
+ 392:Core/Src/car_control.c ****   }
+ 743              		.loc 1 392 10 view .LVU208
+ 744 006e E2E7     		b	.L39
+ 745              	.LVL89:
+ 746              	.L40:
+ 397:Core/Src/car_control.c **** }
+ 747              		.loc 1 397 3 discriminator 2 view .LVU209
+ 748 0070 042D     		cmp	r5, #4
+ 749 0072 04D0     		beq	.L48
+ 397:Core/Src/car_control.c **** }
+ 750              		.loc 1 397 3 discriminator 4 view .LVU210
+ 751 0074 082D     		cmp	r5, #8
+ 752 0076 05D0     		beq	.L49
+ 397:Core/Src/car_control.c **** }
+ 753              		.loc 1 397 3 discriminator 7 view .LVU211
+ 754 0078 3368     		ldr	r3, [r6]
+ 755 007a 1C64     		str	r4, [r3, #64]
+ 756              		.loc 1 398 1 view .LVU212
+ 757 007c E8E7     		b	.L35
+ 758              	.L48:
+ 397:Core/Src/car_control.c **** }
+ 759              		.loc 1 397 3 discriminator 3 view .LVU213
+ 760 007e 3368     		ldr	r3, [r6]
+ 761 0080 9C63     		str	r4, [r3, #56]
+ 762 0082 E5E7     		b	.L35
+ 763              	.L49:
+ 397:Core/Src/car_control.c **** }
+ 764              		.loc 1 397 3 discriminator 6 view .LVU214
+ 765 0084 3368     		ldr	r3, [r6]
+ 766 0086 DC63     		str	r4, [r3, #60]
+ 767 0088 E2E7     		b	.L35
+ 768              	.L51:
+ 769 008a 00BF     		.align	2
+ 770              	.L50:
+ 771 008c 00000000 		.word	g_car
+ 772              		.cfi_endproc
+ 773              	.LFE78:
+ 775              		.section	.text.Car_ControlStep,"ax",%progbits
+ 776              		.align	1
+ 777              		.global	Car_ControlStep
+ 778              		.syntax unified
+ 779              		.thumb
+ 780              		.thumb_func
+ 782              	Car_ControlStep:
+ 783              	.LFB66:
+ 125:Core/Src/car_control.c ****   int16_t left_pwm = 0;
+ 784              		.loc 1 125 1 is_stmt 1 view -0
+ 785              		.cfi_startproc
+ 786              		@ args = 0, pretend = 0, frame = 0
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 22
+
+
+ 787              		@ frame_needed = 0, uses_anonymous_args = 0
+ 788 0000 30B5     		push	{r4, r5, lr}
+ 789              	.LCFI6:
+ 790              		.cfi_def_cfa_offset 12
+ 791              		.cfi_offset 4, -12
+ 792              		.cfi_offset 5, -8
+ 793              		.cfi_offset 14, -4
+ 794 0002 85B0     		sub	sp, sp, #20
+ 795              	.LCFI7:
+ 796              		.cfi_def_cfa_offset 32
+ 126:Core/Src/car_control.c ****   int16_t right_pwm = 0;
+ 797              		.loc 1 126 3 view .LVU216
+ 798              	.LVL90:
+ 127:Core/Src/car_control.c **** 
+ 799              		.loc 1 127 3 view .LVU217
+ 129:Core/Src/car_control.c **** 
+ 800              		.loc 1 129 3 view .LVU218
+ 129:Core/Src/car_control.c **** 
+ 801              		.loc 1 129 8 is_stmt 0 view .LVU219
+ 802 0004 4F4C     		ldr	r4, .L62
+ 803 0006 A368     		ldr	r3, [r4, #8]
+ 129:Core/Src/car_control.c **** 
+ 804              		.loc 1 129 21 view .LVU220
+ 805 0008 0133     		adds	r3, r3, #1
+ 806 000a A360     		str	r3, [r4, #8]
+ 131:Core/Src/car_control.c ****   Car_UpdateEncoder(&g_car.right, &htim2);
+ 807              		.loc 1 131 3 is_stmt 1 view .LVU221
+ 808 000c 4E49     		ldr	r1, .L62+4
+ 809 000e 04F11000 		add	r0, r4, #16
+ 810 0012 FFF7FEFF 		bl	Car_UpdateEncoder
+ 811              	.LVL91:
+ 132:Core/Src/car_control.c ****   LineTracker_Update();
+ 812              		.loc 1 132 3 view .LVU222
+ 813 0016 4D49     		ldr	r1, .L62+8
+ 814 0018 04F14800 		add	r0, r4, #72
+ 815 001c FFF7FEFF 		bl	Car_UpdateEncoder
+ 816              	.LVL92:
+ 133:Core/Src/car_control.c **** 
+ 817              		.loc 1 133 3 view .LVU223
+ 818 0020 FFF7FEFF 		bl	LineTracker_Update
+ 819              	.LVL93:
+ 135:Core/Src/car_control.c ****   {
+ 820              		.loc 1 135 3 view .LVU224
+ 135:Core/Src/car_control.c ****   {
+ 821              		.loc 1 135 16 is_stmt 0 view .LVU225
+ 822 0024 2378     		ldrb	r3, [r4]	@ zero_extendqisi2
+ 823 0026 DBB2     		uxtb	r3, r3
+ 135:Core/Src/car_control.c ****   {
+ 824              		.loc 1 135 3 view .LVU226
+ 825 0028 022B     		cmp	r3, #2
+ 826 002a 35D0     		beq	.L53
+ 827 002c 032B     		cmp	r3, #3
+ 828 002e 3DD0     		beq	.L54
+ 829 0030 012B     		cmp	r3, #1
+ 830 0032 76D1     		bne	.L55
+ 138:Core/Src/car_control.c ****       right_pwm = Car_LimitPwm(g_car.right.manual_pwm);
+ 831              		.loc 1 138 7 is_stmt 1 view .LVU227
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 23
+
+
+ 138:Core/Src/car_control.c ****       right_pwm = Car_LimitPwm(g_car.right.manual_pwm);
+ 832              		.loc 1 138 41 is_stmt 0 view .LVU228
+ 833 0034 2546     		mov	r5, r4
+ 834 0036 B4F84000 		ldrh	r0, [r4, #64]
+ 138:Core/Src/car_control.c ****       right_pwm = Car_LimitPwm(g_car.right.manual_pwm);
+ 835              		.loc 1 138 18 view .LVU229
+ 836 003a 00B2     		sxth	r0, r0
+ 837 003c FFF7FEFF 		bl	Car_LimitPwm
+ 838              	.LVL94:
+ 839 0040 0446     		mov	r4, r0
+ 840              	.LVL95:
+ 139:Core/Src/car_control.c ****       break;
+ 841              		.loc 1 139 7 is_stmt 1 view .LVU230
+ 139:Core/Src/car_control.c ****       break;
+ 842              		.loc 1 139 43 is_stmt 0 view .LVU231
+ 843 0042 B5F87800 		ldrh	r0, [r5, #120]
+ 139:Core/Src/car_control.c ****       break;
+ 844              		.loc 1 139 19 view .LVU232
+ 845 0046 00B2     		sxth	r0, r0
+ 846 0048 FFF7FEFF 		bl	Car_LimitPwm
+ 847              	.LVL96:
+ 140:Core/Src/car_control.c **** 
+ 848              		.loc 1 140 7 is_stmt 1 view .LVU233
+ 849              	.L56:
+ 188:Core/Src/car_control.c ****   g_car.right.pwm_output = right_pwm;
+ 850              		.loc 1 188 3 view .LVU234
+ 188:Core/Src/car_control.c ****   g_car.right.pwm_output = right_pwm;
+ 851              		.loc 1 188 25 is_stmt 0 view .LVU235
+ 852 004c 3D4B     		ldr	r3, .L62
+ 853 004e A3F84240 		strh	r4, [r3, #66]	@ movhi
+ 189:Core/Src/car_control.c **** 
+ 854              		.loc 1 189 3 is_stmt 1 view .LVU236
+ 189:Core/Src/car_control.c **** 
+ 855              		.loc 1 189 26 is_stmt 0 view .LVU237
+ 856 0052 A3F87A00 		strh	r0, [r3, #122]	@ movhi
+ 191:Core/Src/car_control.c ****   {
+ 857              		.loc 1 191 3 is_stmt 1 view .LVU238
+ 191:Core/Src/car_control.c ****   {
+ 858              		.loc 1 191 12 is_stmt 0 view .LVU239
+ 859 0056 1B78     		ldrb	r3, [r3]	@ zero_extendqisi2
+ 191:Core/Src/car_control.c ****   {
+ 860              		.loc 1 191 6 view .LVU240
+ 861 0058 002B     		cmp	r3, #0
+ 862 005a 6FD1     		bne	.L59
+ 193:Core/Src/car_control.c ****   }
+ 863              		.loc 1 193 5 is_stmt 1 view .LVU241
+ 864 005c 0020     		movs	r0, #0
+ 865              	.LVL97:
+ 193:Core/Src/car_control.c ****   }
+ 866              		.loc 1 193 5 is_stmt 0 view .LVU242
+ 867 005e FFF7FEFF 		bl	Car_SetDriverEnable
+ 868              	.LVL98:
+ 869              	.L60:
+ 200:Core/Src/car_control.c ****                  &htim3,
+ 870              		.loc 1 200 3 is_stmt 1 view .LVU243
+ 871 0062 3B4B     		ldr	r3, .L62+12
+ 872 0064 3B4D     		ldr	r5, .L62+16
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 24
+
+
+ 873 0066 3C4C     		ldr	r4, .L62+20
+ 874              	.LVL99:
+ 200:Core/Src/car_control.c ****                  &htim3,
+ 875              		.loc 1 200 3 is_stmt 0 view .LVU244
+ 876 0068 2022     		movs	r2, #32
+ 877 006a 0292     		str	r2, [sp, #8]
+ 878 006c 0193     		str	r3, [sp, #4]
+ 879 006e 1022     		movs	r2, #16
+ 880 0070 0092     		str	r2, [sp]
+ 881 0072 0022     		movs	r2, #0
+ 882 0074 2946     		mov	r1, r5
+ 883 0076 2046     		mov	r0, r4
+ 884 0078 FFF7FEFF 		bl	Car_ApplyMotor
+ 885              	.LVL100:
+ 207:Core/Src/car_control.c ****                  &htim3,
+ 886              		.loc 1 207 3 is_stmt 1 view .LVU245
+ 887 007c 374B     		ldr	r3, .L62+24
+ 888 007e 0122     		movs	r2, #1
+ 889 0080 0292     		str	r2, [sp, #8]
+ 890 0082 0193     		str	r3, [sp, #4]
+ 891 0084 0222     		movs	r2, #2
+ 892 0086 0092     		str	r2, [sp]
+ 893 0088 0422     		movs	r2, #4
+ 894 008a 2946     		mov	r1, r5
+ 895 008c 04F13800 		add	r0, r4, #56
+ 896 0090 FFF7FEFF 		bl	Car_ApplyMotor
+ 897              	.LVL101:
+ 214:Core/Src/car_control.c **** 
+ 898              		.loc 1 214 1 is_stmt 0 view .LVU246
+ 899 0094 05B0     		add	sp, sp, #20
+ 900              	.LCFI8:
+ 901              		.cfi_remember_state
+ 902              		.cfi_def_cfa_offset 12
+ 903              		@ sp needed
+ 904 0096 30BD     		pop	{r4, r5, pc}
+ 905              	.LVL102:
+ 906              	.L53:
+ 907              	.LCFI9:
+ 908              		.cfi_restore_state
+ 143:Core/Src/car_control.c ****       right_pwm = Car_PidStep(&g_car.right);
+ 909              		.loc 1 143 7 is_stmt 1 view .LVU247
+ 143:Core/Src/car_control.c ****       right_pwm = Car_PidStep(&g_car.right);
+ 910              		.loc 1 143 18 is_stmt 0 view .LVU248
+ 911 0098 2F4D     		ldr	r5, .L62+20
+ 912 009a 2846     		mov	r0, r5
+ 913 009c FFF7FEFF 		bl	Car_PidStep
+ 914              	.LVL103:
+ 915 00a0 0446     		mov	r4, r0
+ 916              	.LVL104:
+ 144:Core/Src/car_control.c ****       break;
+ 917              		.loc 1 144 7 is_stmt 1 view .LVU249
+ 144:Core/Src/car_control.c ****       break;
+ 918              		.loc 1 144 19 is_stmt 0 view .LVU250
+ 919 00a2 05F13800 		add	r0, r5, #56
+ 920 00a6 FFF7FEFF 		bl	Car_PidStep
+ 921              	.LVL105:
+ 145:Core/Src/car_control.c **** 
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 25
+
+
+ 922              		.loc 1 145 7 is_stmt 1 view .LVU251
+ 923 00aa CFE7     		b	.L56
+ 924              	.LVL106:
+ 925              	.L54:
+ 148:Core/Src/car_control.c ****       {
+ 926              		.loc 1 148 7 view .LVU252
+ 148:Core/Src/car_control.c ****       {
+ 927              		.loc 1 148 18 is_stmt 0 view .LVU253
+ 928 00ac 2C4B     		ldr	r3, .L62+28
+ 929 00ae DB78     		ldrb	r3, [r3, #3]	@ zero_extendqisi2
+ 148:Core/Src/car_control.c ****       {
+ 930              		.loc 1 148 10 view .LVU254
+ 931 00b0 1BB9     		cbnz	r3, .L57
+ 148:Core/Src/car_control.c ****       {
+ 932              		.loc 1 148 50 discriminator 1 view .LVU255
+ 933 00b2 244B     		ldr	r3, .L62
+ 934 00b4 93F8AC30 		ldrb	r3, [r3, #172]	@ zero_extendqisi2
+ 148:Core/Src/car_control.c ****       {
+ 935              		.loc 1 148 36 discriminator 1 view .LVU256
+ 936 00b8 EBB9     		cbnz	r3, .L58
+ 937              	.L57:
+ 938              	.LBB2:
+ 150:Core/Src/car_control.c ****         int32_t left_target = g_car.line.base_counts - correction;
+ 939              		.loc 1 150 9 is_stmt 1 view .LVU257
+ 150:Core/Src/car_control.c ****         int32_t left_target = g_car.line.base_counts - correction;
+ 940              		.loc 1 150 61 is_stmt 0 view .LVU258
+ 941 00ba 294B     		ldr	r3, .L62+28
+ 942 00bc 1889     		ldrh	r0, [r3, #8]
+ 150:Core/Src/car_control.c ****         int32_t left_target = g_car.line.base_counts - correction;
+ 943              		.loc 1 150 30 view .LVU259
+ 944 00be 00B2     		sxth	r0, r0
+ 945 00c0 FFF7FEFF 		bl	Car_LinePidStep
+ 946              	.LVL107:
+ 151:Core/Src/car_control.c ****         int32_t right_target = g_car.line.base_counts + correction;
+ 947              		.loc 1 151 9 is_stmt 1 view .LVU260
+ 151:Core/Src/car_control.c ****         int32_t right_target = g_car.line.base_counts + correction;
+ 948              		.loc 1 151 41 is_stmt 0 view .LVU261
+ 949 00c4 1F4D     		ldr	r5, .L62
+ 950 00c6 D5F89C20 		ldr	r2, [r5, #156]
+ 151:Core/Src/car_control.c ****         int32_t right_target = g_car.line.base_counts + correction;
+ 951              		.loc 1 151 17 view .LVU262
+ 952 00ca 121A     		subs	r2, r2, r0
+ 953              	.LVL108:
+ 152:Core/Src/car_control.c **** 
+ 954              		.loc 1 152 9 is_stmt 1 view .LVU263
+ 152:Core/Src/car_control.c **** 
+ 955              		.loc 1 152 42 is_stmt 0 view .LVU264
+ 956 00cc D5F89C30 		ldr	r3, [r5, #156]
+ 152:Core/Src/car_control.c **** 
+ 957              		.loc 1 152 17 view .LVU265
+ 958 00d0 0344     		add	r3, r3, r0
+ 959              	.LVL109:
+ 154:Core/Src/car_control.c ****         g_car.line.left_target_counts = left_target;
+ 960              		.loc 1 154 9 is_stmt 1 view .LVU266
+ 154:Core/Src/car_control.c ****         g_car.line.left_target_counts = left_target;
+ 961              		.loc 1 154 38 is_stmt 0 view .LVU267
+ 962 00d2 C5F8A000 		str	r0, [r5, #160]
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 26
+
+
+ 155:Core/Src/car_control.c ****         g_car.line.right_target_counts = right_target;
+ 963              		.loc 1 155 9 is_stmt 1 view .LVU268
+ 155:Core/Src/car_control.c ****         g_car.line.right_target_counts = right_target;
+ 964              		.loc 1 155 39 is_stmt 0 view .LVU269
+ 965 00d6 C5F8A420 		str	r2, [r5, #164]
+ 156:Core/Src/car_control.c ****         g_car.left.target_counts = left_target;
+ 966              		.loc 1 156 9 is_stmt 1 view .LVU270
+ 156:Core/Src/car_control.c ****         g_car.left.target_counts = left_target;
+ 967              		.loc 1 156 40 is_stmt 0 view .LVU271
+ 968 00da C5F8A830 		str	r3, [r5, #168]
+ 157:Core/Src/car_control.c ****         g_car.right.target_counts = right_target;
+ 969              		.loc 1 157 9 is_stmt 1 view .LVU272
+ 157:Core/Src/car_control.c ****         g_car.right.target_counts = right_target;
+ 970              		.loc 1 157 34 is_stmt 0 view .LVU273
+ 971 00de EA62     		str	r2, [r5, #44]
+ 158:Core/Src/car_control.c **** 
+ 972              		.loc 1 158 9 is_stmt 1 view .LVU274
+ 158:Core/Src/car_control.c **** 
+ 973              		.loc 1 158 35 is_stmt 0 view .LVU275
+ 974 00e0 6B66     		str	r3, [r5, #100]
+ 160:Core/Src/car_control.c ****         right_pwm = Car_PidStep(&g_car.right);
+ 975              		.loc 1 160 9 is_stmt 1 view .LVU276
+ 160:Core/Src/car_control.c ****         right_pwm = Car_PidStep(&g_car.right);
+ 976              		.loc 1 160 20 is_stmt 0 view .LVU277
+ 977 00e2 05F11000 		add	r0, r5, #16
+ 978              	.LVL110:
+ 160:Core/Src/car_control.c ****         right_pwm = Car_PidStep(&g_car.right);
+ 979              		.loc 1 160 20 view .LVU278
+ 980 00e6 FFF7FEFF 		bl	Car_PidStep
+ 981              	.LVL111:
+ 160:Core/Src/car_control.c ****         right_pwm = Car_PidStep(&g_car.right);
+ 982              		.loc 1 160 20 view .LVU279
+ 983 00ea 0446     		mov	r4, r0
+ 984              	.LVL112:
+ 161:Core/Src/car_control.c ****       }
+ 985              		.loc 1 161 9 is_stmt 1 view .LVU280
+ 161:Core/Src/car_control.c ****       }
+ 986              		.loc 1 161 21 is_stmt 0 view .LVU281
+ 987 00ec 05F14800 		add	r0, r5, #72
+ 988 00f0 FFF7FEFF 		bl	Car_PidStep
+ 989              	.LVL113:
+ 161:Core/Src/car_control.c ****       }
+ 990              		.loc 1 161 21 view .LVU282
+ 991              	.LBE2:
+ 149:Core/Src/car_control.c ****         int32_t correction = Car_LinePidStep((int32_t)g_line.error);
+ 992              		.loc 1 149 7 view .LVU283
+ 993 00f4 AAE7     		b	.L56
+ 994              	.LVL114:
+ 995              	.L58:
+ 165:Core/Src/car_control.c ****         g_car.line.left_target_counts = 0;
+ 996              		.loc 1 165 9 is_stmt 1 view .LVU284
+ 165:Core/Src/car_control.c ****         g_car.line.left_target_counts = 0;
+ 997              		.loc 1 165 38 is_stmt 0 view .LVU285
+ 998 00f6 134D     		ldr	r5, .L62
+ 999 00f8 0024     		movs	r4, #0
+ 1000 00fa C5F8A040 		str	r4, [r5, #160]
+ 166:Core/Src/car_control.c ****         g_car.line.right_target_counts = 0;
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 27
+
+
+ 1001              		.loc 1 166 9 is_stmt 1 view .LVU286
+ 166:Core/Src/car_control.c ****         g_car.line.right_target_counts = 0;
+ 1002              		.loc 1 166 39 is_stmt 0 view .LVU287
+ 1003 00fe C5F8A440 		str	r4, [r5, #164]
+ 167:Core/Src/car_control.c ****         g_car.left.target_counts = 0;
+ 1004              		.loc 1 167 9 is_stmt 1 view .LVU288
+ 167:Core/Src/car_control.c ****         g_car.left.target_counts = 0;
+ 1005              		.loc 1 167 40 is_stmt 0 view .LVU289
+ 1006 0102 C5F8A840 		str	r4, [r5, #168]
+ 168:Core/Src/car_control.c ****         g_car.right.target_counts = 0;
+ 1007              		.loc 1 168 9 is_stmt 1 view .LVU290
+ 168:Core/Src/car_control.c ****         g_car.right.target_counts = 0;
+ 1008              		.loc 1 168 34 is_stmt 0 view .LVU291
+ 1009 0106 EC62     		str	r4, [r5, #44]
+ 169:Core/Src/car_control.c ****         Car_ResetLinePid();
+ 1010              		.loc 1 169 9 is_stmt 1 view .LVU292
+ 169:Core/Src/car_control.c ****         Car_ResetLinePid();
+ 1011              		.loc 1 169 35 is_stmt 0 view .LVU293
+ 1012 0108 6C66     		str	r4, [r5, #100]
+ 170:Core/Src/car_control.c ****         Car_ResetPid(&g_car.left);
+ 1013              		.loc 1 170 9 is_stmt 1 view .LVU294
+ 1014 010a FFF7FEFF 		bl	Car_ResetLinePid
+ 1015              	.LVL115:
+ 171:Core/Src/car_control.c ****         Car_ResetPid(&g_car.right);
+ 1016              		.loc 1 171 9 view .LVU295
+ 1017 010e 05F11000 		add	r0, r5, #16
+ 1018 0112 FFF7FEFF 		bl	Car_ResetPid
+ 1019              	.LVL116:
+ 172:Core/Src/car_control.c ****         left_pwm = 0;
+ 1020              		.loc 1 172 9 view .LVU296
+ 1021 0116 05F14800 		add	r0, r5, #72
+ 1022 011a FFF7FEFF 		bl	Car_ResetPid
+ 1023              	.LVL117:
+ 173:Core/Src/car_control.c ****         right_pwm = 0;
+ 1024              		.loc 1 173 9 view .LVU297
+ 174:Core/Src/car_control.c ****       }
+ 1025              		.loc 1 174 9 view .LVU298
+ 174:Core/Src/car_control.c ****       }
+ 1026              		.loc 1 174 19 is_stmt 0 view .LVU299
+ 1027 011e 2046     		mov	r0, r4
+ 1028 0120 94E7     		b	.L56
+ 1029              	.L55:
+ 180:Core/Src/car_control.c ****       Car_ResetPid(&g_car.left);
+ 1030              		.loc 1 180 7 is_stmt 1 view .LVU300
+ 1031 0122 FFF7FEFF 		bl	Car_ResetLinePid
+ 1032              	.LVL118:
+ 181:Core/Src/car_control.c ****       Car_ResetPid(&g_car.right);
+ 1033              		.loc 1 181 7 view .LVU301
+ 1034 0126 0C4C     		ldr	r4, .L62+20
+ 1035 0128 2046     		mov	r0, r4
+ 1036 012a FFF7FEFF 		bl	Car_ResetPid
+ 1037              	.LVL119:
+ 182:Core/Src/car_control.c ****       left_pwm = 0;
+ 1038              		.loc 1 182 7 view .LVU302
+ 1039 012e 04F13800 		add	r0, r4, #56
+ 1040 0132 FFF7FEFF 		bl	Car_ResetPid
+ 1041              	.LVL120:
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 28
+
+
+ 183:Core/Src/car_control.c ****       right_pwm = 0;
+ 1042              		.loc 1 183 7 view .LVU303
+ 184:Core/Src/car_control.c ****       break;
+ 1043              		.loc 1 184 7 view .LVU304
+ 185:Core/Src/car_control.c ****   }
+ 1044              		.loc 1 185 7 view .LVU305
+ 184:Core/Src/car_control.c ****       break;
+ 1045              		.loc 1 184 17 is_stmt 0 view .LVU306
+ 1046 0136 0020     		movs	r0, #0
+ 183:Core/Src/car_control.c ****       right_pwm = 0;
+ 1047              		.loc 1 183 16 view .LVU307
+ 1048 0138 0446     		mov	r4, r0
+ 185:Core/Src/car_control.c ****   }
+ 1049              		.loc 1 185 7 view .LVU308
+ 1050 013a 87E7     		b	.L56
+ 1051              	.LVL121:
+ 1052              	.L59:
+ 197:Core/Src/car_control.c ****   }
+ 1053              		.loc 1 197 5 is_stmt 1 view .LVU309
+ 1054 013c 0120     		movs	r0, #1
+ 1055              	.LVL122:
+ 197:Core/Src/car_control.c ****   }
+ 1056              		.loc 1 197 5 is_stmt 0 view .LVU310
+ 1057 013e FFF7FEFF 		bl	Car_SetDriverEnable
+ 1058              	.LVL123:
+ 197:Core/Src/car_control.c ****   }
+ 1059              		.loc 1 197 5 view .LVU311
+ 1060 0142 8EE7     		b	.L60
+ 1061              	.L63:
+ 1062              		.align	2
+ 1063              	.L62:
+ 1064 0144 00000000 		.word	g_car
+ 1065 0148 00000000 		.word	htim1
+ 1066 014c 00000000 		.word	htim2
+ 1067 0150 00080140 		.word	1073809408
+ 1068 0154 00000000 		.word	htim3
+ 1069 0158 10000000 		.word	g_car+16
+ 1070 015c 000C0140 		.word	1073810432
+ 1071 0160 00000000 		.word	g_line
+ 1072              		.cfi_endproc
+ 1073              	.LFE66:
+ 1075              		.section	.text.Car_Stop,"ax",%progbits
+ 1076              		.align	1
+ 1077              		.global	Car_Stop
+ 1078              		.syntax unified
+ 1079              		.thumb
+ 1080              		.thumb_func
+ 1082              	Car_Stop:
+ 1083              	.LFB67:
+ 217:Core/Src/car_control.c ****   g_car.mode = CAR_MODE_DISABLED;
+ 1084              		.loc 1 217 1 is_stmt 1 view -0
+ 1085              		.cfi_startproc
+ 1086              		@ args = 0, pretend = 0, frame = 0
+ 1087              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1088 0000 F0B5     		push	{r4, r5, r6, r7, lr}
+ 1089              	.LCFI10:
+ 1090              		.cfi_def_cfa_offset 20
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 29
+
+
+ 1091              		.cfi_offset 4, -20
+ 1092              		.cfi_offset 5, -16
+ 1093              		.cfi_offset 6, -12
+ 1094              		.cfi_offset 7, -8
+ 1095              		.cfi_offset 14, -4
+ 1096 0002 85B0     		sub	sp, sp, #20
+ 1097              	.LCFI11:
+ 1098              		.cfi_def_cfa_offset 40
+ 218:Core/Src/car_control.c ****   g_car.left.target_counts = 0;
+ 1099              		.loc 1 218 3 view .LVU313
+ 218:Core/Src/car_control.c ****   g_car.left.target_counts = 0;
+ 1100              		.loc 1 218 14 is_stmt 0 view .LVU314
+ 1101 0004 184D     		ldr	r5, .L66
+ 1102 0006 0024     		movs	r4, #0
+ 1103 0008 2C70     		strb	r4, [r5]
+ 219:Core/Src/car_control.c ****   g_car.right.target_counts = 0;
+ 1104              		.loc 1 219 3 is_stmt 1 view .LVU315
+ 219:Core/Src/car_control.c ****   g_car.right.target_counts = 0;
+ 1105              		.loc 1 219 28 is_stmt 0 view .LVU316
+ 1106 000a EC62     		str	r4, [r5, #44]
+ 220:Core/Src/car_control.c ****   g_car.left.manual_pwm = 0;
+ 1107              		.loc 1 220 3 is_stmt 1 view .LVU317
+ 220:Core/Src/car_control.c ****   g_car.left.manual_pwm = 0;
+ 1108              		.loc 1 220 29 is_stmt 0 view .LVU318
+ 1109 000c 6C66     		str	r4, [r5, #100]
+ 221:Core/Src/car_control.c ****   g_car.right.manual_pwm = 0;
+ 1110              		.loc 1 221 3 is_stmt 1 view .LVU319
+ 221:Core/Src/car_control.c ****   g_car.right.manual_pwm = 0;
+ 1111              		.loc 1 221 25 is_stmt 0 view .LVU320
+ 1112 000e A5F84040 		strh	r4, [r5, #64]	@ movhi
+ 222:Core/Src/car_control.c ****   g_car.left.pwm_output = 0;
+ 1113              		.loc 1 222 3 is_stmt 1 view .LVU321
+ 222:Core/Src/car_control.c ****   g_car.left.pwm_output = 0;
+ 1114              		.loc 1 222 26 is_stmt 0 view .LVU322
+ 1115 0012 A5F87840 		strh	r4, [r5, #120]	@ movhi
+ 223:Core/Src/car_control.c ****   g_car.right.pwm_output = 0;
+ 1116              		.loc 1 223 3 is_stmt 1 view .LVU323
+ 223:Core/Src/car_control.c ****   g_car.right.pwm_output = 0;
+ 1117              		.loc 1 223 25 is_stmt 0 view .LVU324
+ 1118 0016 A5F84240 		strh	r4, [r5, #66]	@ movhi
+ 224:Core/Src/car_control.c ****   Car_ResetPid(&g_car.left);
+ 1119              		.loc 1 224 3 is_stmt 1 view .LVU325
+ 224:Core/Src/car_control.c ****   Car_ResetPid(&g_car.left);
+ 1120              		.loc 1 224 26 is_stmt 0 view .LVU326
+ 1121 001a A5F87A40 		strh	r4, [r5, #122]	@ movhi
+ 225:Core/Src/car_control.c ****   Car_ResetPid(&g_car.right);
+ 1122              		.loc 1 225 3 is_stmt 1 view .LVU327
+ 1123 001e 05F11007 		add	r7, r5, #16
+ 1124 0022 3846     		mov	r0, r7
+ 1125 0024 FFF7FEFF 		bl	Car_ResetPid
+ 1126              	.LVL124:
+ 226:Core/Src/car_control.c ****   Car_SetDriverEnable(0U);
+ 1127              		.loc 1 226 3 view .LVU328
+ 1128 0028 4835     		adds	r5, r5, #72
+ 1129 002a 2846     		mov	r0, r5
+ 1130 002c FFF7FEFF 		bl	Car_ResetPid
+ 1131              	.LVL125:
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 30
+
+
+ 227:Core/Src/car_control.c ****   Car_ApplyMotor(&g_car.left, &htim3, TIM_CHANNEL_1, AIN1_GPIO_Port, AIN1_Pin, AIN2_GPIO_Port, AIN2
+ 1132              		.loc 1 227 3 view .LVU329
+ 1133 0030 2046     		mov	r0, r4
+ 1134 0032 FFF7FEFF 		bl	Car_SetDriverEnable
+ 1135              	.LVL126:
+ 228:Core/Src/car_control.c ****   Car_ApplyMotor(&g_car.right, &htim3, TIM_CHANNEL_2, BIN1_GPIO_Port, BIN1_Pin, BIN2_GPIO_Port, BIN
+ 1136              		.loc 1 228 3 view .LVU330
+ 1137 0036 0D4B     		ldr	r3, .L66+4
+ 1138 0038 0D4E     		ldr	r6, .L66+8
+ 1139 003a 2022     		movs	r2, #32
+ 1140 003c 0292     		str	r2, [sp, #8]
+ 1141 003e 0193     		str	r3, [sp, #4]
+ 1142 0040 1022     		movs	r2, #16
+ 1143 0042 0092     		str	r2, [sp]
+ 1144 0044 2246     		mov	r2, r4
+ 1145 0046 3146     		mov	r1, r6
+ 1146 0048 3846     		mov	r0, r7
+ 1147 004a FFF7FEFF 		bl	Car_ApplyMotor
+ 1148              	.LVL127:
+ 229:Core/Src/car_control.c **** }
+ 1149              		.loc 1 229 3 view .LVU331
+ 1150 004e 094B     		ldr	r3, .L66+12
+ 1151 0050 0122     		movs	r2, #1
+ 1152 0052 0292     		str	r2, [sp, #8]
+ 1153 0054 0193     		str	r3, [sp, #4]
+ 1154 0056 0222     		movs	r2, #2
+ 1155 0058 0092     		str	r2, [sp]
+ 1156 005a 0422     		movs	r2, #4
+ 1157 005c 3146     		mov	r1, r6
+ 1158 005e 2846     		mov	r0, r5
+ 1159 0060 FFF7FEFF 		bl	Car_ApplyMotor
+ 1160              	.LVL128:
+ 230:Core/Src/car_control.c **** 
+ 1161              		.loc 1 230 1 is_stmt 0 view .LVU332
+ 1162 0064 05B0     		add	sp, sp, #20
+ 1163              	.LCFI12:
+ 1164              		.cfi_def_cfa_offset 20
+ 1165              		@ sp needed
+ 1166 0066 F0BD     		pop	{r4, r5, r6, r7, pc}
+ 1167              	.L67:
+ 1168              		.align	2
+ 1169              	.L66:
+ 1170 0068 00000000 		.word	g_car
+ 1171 006c 00080140 		.word	1073809408
+ 1172 0070 00000000 		.word	htim3
+ 1173 0074 000C0140 		.word	1073810432
+ 1174              		.cfi_endproc
+ 1175              	.LFE67:
+ 1177              		.section	.text.Car_Init,"ax",%progbits
+ 1178              		.align	1
+ 1179              		.global	Car_Init
+ 1180              		.syntax unified
+ 1181              		.thumb
+ 1182              		.thumb_func
+ 1184              	Car_Init:
+ 1185              	.LFB65:
+ 103:Core/Src/car_control.c ****   HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 31
+
+
+ 1186              		.loc 1 103 1 is_stmt 1 view -0
+ 1187              		.cfi_startproc
+ 1188              		@ args = 0, pretend = 0, frame = 0
+ 1189              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1190 0000 70B5     		push	{r4, r5, r6, lr}
+ 1191              	.LCFI13:
+ 1192              		.cfi_def_cfa_offset 16
+ 1193              		.cfi_offset 4, -16
+ 1194              		.cfi_offset 5, -12
+ 1195              		.cfi_offset 6, -8
+ 1196              		.cfi_offset 14, -4
+ 104:Core/Src/car_control.c ****   HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
+ 1197              		.loc 1 104 3 view .LVU334
+ 1198 0002 144E     		ldr	r6, .L70
+ 1199 0004 3C21     		movs	r1, #60
+ 1200 0006 3046     		mov	r0, r6
+ 1201 0008 FFF7FEFF 		bl	HAL_TIM_Encoder_Start
+ 1202              	.LVL129:
+ 105:Core/Src/car_control.c ****   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+ 1203              		.loc 1 105 3 view .LVU335
+ 1204 000c 124D     		ldr	r5, .L70+4
+ 1205 000e 3C21     		movs	r1, #60
+ 1206 0010 2846     		mov	r0, r5
+ 1207 0012 FFF7FEFF 		bl	HAL_TIM_Encoder_Start
+ 1208              	.LVL130:
+ 106:Core/Src/car_control.c ****   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
+ 1209              		.loc 1 106 3 view .LVU336
+ 1210 0016 114C     		ldr	r4, .L70+8
+ 1211 0018 0021     		movs	r1, #0
+ 1212 001a 2046     		mov	r0, r4
+ 1213 001c FFF7FEFF 		bl	HAL_TIM_PWM_Start
+ 1214              	.LVL131:
+ 107:Core/Src/car_control.c **** 
+ 1215              		.loc 1 107 3 view .LVU337
+ 1216 0020 0421     		movs	r1, #4
+ 1217 0022 2046     		mov	r0, r4
+ 1218 0024 FFF7FEFF 		bl	HAL_TIM_PWM_Start
+ 1219              	.LVL132:
+ 109:Core/Src/car_control.c ****   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 0U);
+ 1220              		.loc 1 109 3 view .LVU338
+ 1221 0028 2268     		ldr	r2, [r4]
+ 1222 002a 0023     		movs	r3, #0
+ 1223 002c 5363     		str	r3, [r2, #52]
+ 110:Core/Src/car_control.c **** 
+ 1224              		.loc 1 110 3 view .LVU339
+ 1225 002e 9363     		str	r3, [r2, #56]
+ 112:Core/Src/car_control.c ****   __HAL_TIM_SET_COUNTER(&htim2, 0U);
+ 1226              		.loc 1 112 3 view .LVU340
+ 1227 0030 3268     		ldr	r2, [r6]
+ 1228 0032 5362     		str	r3, [r2, #36]
+ 113:Core/Src/car_control.c **** 
+ 1229              		.loc 1 113 3 view .LVU341
+ 1230 0034 2A68     		ldr	r2, [r5]
+ 1231 0036 5362     		str	r3, [r2, #36]
+ 115:Core/Src/car_control.c ****   g_car.right.encoder_last = 0;
+ 1232              		.loc 1 115 3 view .LVU342
+ 115:Core/Src/car_control.c ****   g_car.right.encoder_last = 0;
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 32
+
+
+ 1233              		.loc 1 115 27 is_stmt 0 view .LVU343
+ 1234 0038 094A     		ldr	r2, .L70+12
+ 1235 003a D387     		strh	r3, [r2, #62]	@ movhi
+ 116:Core/Src/car_control.c ****   g_car.left.encoder_raw = 0;
+ 1236              		.loc 1 116 3 is_stmt 1 view .LVU344
+ 116:Core/Src/car_control.c ****   g_car.left.encoder_raw = 0;
+ 1237              		.loc 1 116 28 is_stmt 0 view .LVU345
+ 1238 003c A2F87630 		strh	r3, [r2, #118]	@ movhi
+ 117:Core/Src/car_control.c ****   g_car.right.encoder_raw = 0;
+ 1239              		.loc 1 117 3 is_stmt 1 view .LVU346
+ 117:Core/Src/car_control.c ****   g_car.right.encoder_raw = 0;
+ 1240              		.loc 1 117 26 is_stmt 0 view .LVU347
+ 1241 0040 9387     		strh	r3, [r2, #60]	@ movhi
+ 118:Core/Src/car_control.c **** 
+ 1242              		.loc 1 118 3 is_stmt 1 view .LVU348
+ 118:Core/Src/car_control.c **** 
+ 1243              		.loc 1 118 27 is_stmt 0 view .LVU349
+ 1244 0042 A2F87430 		strh	r3, [r2, #116]	@ movhi
+ 120:Core/Src/car_control.c ****   HAL_TIM_Base_Start_IT(&htim4);
+ 1245              		.loc 1 120 3 is_stmt 1 view .LVU350
+ 1246 0046 FFF7FEFF 		bl	Car_Stop
+ 1247              	.LVL133:
+ 121:Core/Src/car_control.c **** }
+ 1248              		.loc 1 121 3 view .LVU351
+ 1249 004a 0648     		ldr	r0, .L70+16
+ 1250 004c FFF7FEFF 		bl	HAL_TIM_Base_Start_IT
+ 1251              	.LVL134:
+ 122:Core/Src/car_control.c **** 
+ 1252              		.loc 1 122 1 is_stmt 0 view .LVU352
+ 1253 0050 70BD     		pop	{r4, r5, r6, pc}
+ 1254              	.L71:
+ 1255 0052 00BF     		.align	2
+ 1256              	.L70:
+ 1257 0054 00000000 		.word	htim1
+ 1258 0058 00000000 		.word	htim2
+ 1259 005c 00000000 		.word	htim3
+ 1260 0060 00000000 		.word	g_car
+ 1261 0064 00000000 		.word	htim4
+ 1262              		.cfi_endproc
+ 1263              	.LFE65:
+ 1265              		.section	.text.Car_SetSpeedTargets,"ax",%progbits
+ 1266              		.align	1
+ 1267              		.global	Car_SetSpeedTargets
+ 1268              		.syntax unified
+ 1269              		.thumb
+ 1270              		.thumb_func
+ 1272              	Car_SetSpeedTargets:
+ 1273              	.LVL135:
+ 1274              	.LFB68:
+ 233:Core/Src/car_control.c ****   g_car.left.target_counts = left_counts;
+ 1275              		.loc 1 233 1 is_stmt 1 view -0
+ 1276              		.cfi_startproc
+ 1277              		@ args = 0, pretend = 0, frame = 0
+ 1278              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1279              		@ link register save eliminated.
+ 234:Core/Src/car_control.c ****   g_car.right.target_counts = right_counts;
+ 1280              		.loc 1 234 3 view .LVU354
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 33
+
+
+ 234:Core/Src/car_control.c ****   g_car.right.target_counts = right_counts;
+ 1281              		.loc 1 234 28 is_stmt 0 view .LVU355
+ 1282 0000 024B     		ldr	r3, .L73
+ 1283 0002 D862     		str	r0, [r3, #44]
+ 235:Core/Src/car_control.c ****   g_car.mode = CAR_MODE_SPEED_PID;
+ 1284              		.loc 1 235 3 is_stmt 1 view .LVU356
+ 235:Core/Src/car_control.c ****   g_car.mode = CAR_MODE_SPEED_PID;
+ 1285              		.loc 1 235 29 is_stmt 0 view .LVU357
+ 1286 0004 5966     		str	r1, [r3, #100]
+ 236:Core/Src/car_control.c **** }
+ 1287              		.loc 1 236 3 is_stmt 1 view .LVU358
+ 236:Core/Src/car_control.c **** }
+ 1288              		.loc 1 236 14 is_stmt 0 view .LVU359
+ 1289 0006 0222     		movs	r2, #2
+ 1290 0008 1A70     		strb	r2, [r3]
+ 237:Core/Src/car_control.c **** 
+ 1291              		.loc 1 237 1 view .LVU360
+ 1292 000a 7047     		bx	lr
+ 1293              	.L74:
+ 1294              		.align	2
+ 1295              	.L73:
+ 1296 000c 00000000 		.word	g_car
+ 1297              		.cfi_endproc
+ 1298              	.LFE68:
+ 1300              		.global	g_car
+ 1301              		.section	.data.g_car,"aw"
+ 1302              		.align	2
+ 1305              	g_car:
+ 1306 0000 01       		.byte	1
+ 1307 0001 000000   		.space	3
+ 1308 0004 0A000000 		.word	10
+ 1309 0008 00000000 		.word	0
+ 1310 000c 00       		.byte	0
+ 1311 000d 000000   		.space	3
+ 1312 0010 00003443 		.word	1127481344
+ 1313 0014 3333333F 		.word	1060320051
+ 1314 0018 00008040 		.word	1082130432
+ 1315 001c 00F04745 		.word	1162342400
+ 1316 0020 00000000 		.word	0
+ 1317 0024 00F04745 		.word	1162342400
+ 1318 0028 00F04745 		.word	1162342400
+ 1319 002c 2D000000 		.word	45
+ 1320 0030 00000000 		.word	0
+ 1321 0034 00000000 		.word	0
+ 1322 0038 00000000 		.word	0
+ 1323 003c 0000     		.short	0
+ 1324 003e 0000     		.short	0
+ 1325 0040 280A     		.short	2600
+ 1326 0042 0000     		.short	0
+ 1327 0044 01       		.byte	1
+ 1328 0045 00       		.byte	0
+ 1329 0046 0000     		.space	2
+ 1330 0048 0000C843 		.word	1137180672
+ 1331 004c 9A99193F 		.word	1058642330
+ 1332 0050 00002042 		.word	1109393408
+ 1333 0054 00F04745 		.word	1162342400
+ 1334 0058 00000000 		.word	0
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 34
+
+
+ 1335 005c 00F04745 		.word	1162342400
+ 1336 0060 00F04745 		.word	1162342400
+ 1337 0064 2E000000 		.word	46
+ 1338 0068 00000000 		.word	0
+ 1339 006c 00000000 		.word	0
+ 1340 0070 00000000 		.word	0
+ 1341 0074 0000     		.short	0
+ 1342 0076 0000     		.short	0
+ 1343 0078 280A     		.short	2600
+ 1344 007a 0000     		.short	0
+ 1345 007c 01       		.byte	1
+ 1346 007d 01       		.byte	1
+ 1347 007e 0000     		.space	2
+ 1348 0080 6666A63F 		.word	1067869798
+ 1349 0084 0AD7A33D 		.word	1034147594
+ 1350 0088 CDCC4C3E 		.word	1045220557
+ 1351 008c 00000000 		.word	0
+ 1352 0090 00000000 		.word	0
+ 1353 0094 0000F041 		.word	1106247680
+ 1354 0098 00007A44 		.word	1148846080
+ 1355 009c 2E000000 		.word	46
+ 1356 00a0 00000000 		.word	0
+ 1357 00a4 00000000 		.word	0
+ 1358 00a8 00000000 		.word	0
+ 1359 00ac 01       		.byte	1
+ 1360 00ad 000000   		.space	3
+ 1361              		.text
+ 1362              	.Letext0:
+ 1363              		.file 2 "F:/Msys2/mingw64/arm-none-eabi/include/machine/_default_types.h"
+ 1364              		.file 3 "F:/Msys2/mingw64/arm-none-eabi/include/sys/_stdint.h"
+ 1365              		.file 4 "Drivers/CMSIS/Device/ST/STM32F1xx/Include/stm32f103xb.h"
+ 1366              		.file 5 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_def.h"
+ 1367              		.file 6 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_gpio.h"
+ 1368              		.file 7 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_dma.h"
+ 1369              		.file 8 "Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h"
+ 1370              		.file 9 "Core/Inc/main.h"
+ 1371              		.file 10 "Core/Inc/car_control.h"
+ 1372              		.file 11 "Core/Inc/line_tracker.h"
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 35
+
+
+DEFINED SYMBOLS
+                            *ABS*:00000000 car_control.c
+   D:\TMP\cc6Iqxwj.s:19     .text.Car_LimitPwm:00000000 $t
+   D:\TMP\cc6Iqxwj.s:24     .text.Car_LimitPwm:00000000 Car_LimitPwm
+   D:\TMP\cc6Iqxwj.s:63     .text.Car_LimitPwm:0000001c $d
+   D:\TMP\cc6Iqxwj.s:69     .text.Car_AbsFloat:00000000 $t
+   D:\TMP\cc6Iqxwj.s:74     .text.Car_AbsFloat:00000000 Car_AbsFloat
+   D:\TMP\cc6Iqxwj.s:113    .text.Car_LimitFloat:00000000 $t
+   D:\TMP\cc6Iqxwj.s:118    .text.Car_LimitFloat:00000000 Car_LimitFloat
+   D:\TMP\cc6Iqxwj.s:190    .text.Car_PidStep:00000000 $t
+   D:\TMP\cc6Iqxwj.s:195    .text.Car_PidStep:00000000 Car_PidStep
+   D:\TMP\cc6Iqxwj.s:317    .text.Car_LinePidStep:00000000 $t
+   D:\TMP\cc6Iqxwj.s:322    .text.Car_LinePidStep:00000000 Car_LinePidStep
+   D:\TMP\cc6Iqxwj.s:430    .text.Car_LinePidStep:00000078 $d
+   D:\TMP\cc6Iqxwj.s:1305   .data.g_car:00000000 g_car
+   D:\TMP\cc6Iqxwj.s:435    .text.Car_ResetPid:00000000 $t
+   D:\TMP\cc6Iqxwj.s:440    .text.Car_ResetPid:00000000 Car_ResetPid
+   D:\TMP\cc6Iqxwj.s:461    .text.Car_ResetLinePid:00000000 $t
+   D:\TMP\cc6Iqxwj.s:466    .text.Car_ResetLinePid:00000000 Car_ResetLinePid
+   D:\TMP\cc6Iqxwj.s:486    .text.Car_ResetLinePid:00000010 $d
+   D:\TMP\cc6Iqxwj.s:491    .text.Car_UpdateEncoder:00000000 $t
+   D:\TMP\cc6Iqxwj.s:496    .text.Car_UpdateEncoder:00000000 Car_UpdateEncoder
+   D:\TMP\cc6Iqxwj.s:558    .text.Car_SetDriverEnable:00000000 $t
+   D:\TMP\cc6Iqxwj.s:563    .text.Car_SetDriverEnable:00000000 Car_SetDriverEnable
+   D:\TMP\cc6Iqxwj.s:606    .text.Car_SetDriverEnable:00000020 $d
+   D:\TMP\cc6Iqxwj.s:612    .text.Car_ApplyMotor:00000000 $t
+   D:\TMP\cc6Iqxwj.s:617    .text.Car_ApplyMotor:00000000 Car_ApplyMotor
+   D:\TMP\cc6Iqxwj.s:771    .text.Car_ApplyMotor:0000008c $d
+   D:\TMP\cc6Iqxwj.s:776    .text.Car_ControlStep:00000000 $t
+   D:\TMP\cc6Iqxwj.s:782    .text.Car_ControlStep:00000000 Car_ControlStep
+   D:\TMP\cc6Iqxwj.s:1064   .text.Car_ControlStep:00000144 $d
+   D:\TMP\cc6Iqxwj.s:1076   .text.Car_Stop:00000000 $t
+   D:\TMP\cc6Iqxwj.s:1082   .text.Car_Stop:00000000 Car_Stop
+   D:\TMP\cc6Iqxwj.s:1170   .text.Car_Stop:00000068 $d
+   D:\TMP\cc6Iqxwj.s:1178   .text.Car_Init:00000000 $t
+   D:\TMP\cc6Iqxwj.s:1184   .text.Car_Init:00000000 Car_Init
+   D:\TMP\cc6Iqxwj.s:1257   .text.Car_Init:00000054 $d
+   D:\TMP\cc6Iqxwj.s:1266   .text.Car_SetSpeedTargets:00000000 $t
+   D:\TMP\cc6Iqxwj.s:1272   .text.Car_SetSpeedTargets:00000000 Car_SetSpeedTargets
+   D:\TMP\cc6Iqxwj.s:1296   .text.Car_SetSpeedTargets:0000000c $d
+   D:\TMP\cc6Iqxwj.s:1302   .data.g_car:00000000 $d
+                           .group:00000000 wm4.0.82cd861fcffc377458525806b973ac66
+                           .group:00000000 wm4.stm32f1xx_hal_conf.h.22.1a0581c92af625996e824fe9fcaf6f74
+                           .group:00000000 wm4.stm32f1xx.h.38.953d9e9601c55b585f2853dd3f53fdde
+                           .group:00000000 wm4.stm32f103xb.h.37.7c5fb130aa158ead5441dda9799c1941
+                           .group:00000000 wm4._newlib_version.h.4.0eb654b64686e2bd29646258853f6c22
+                           .group:00000000 wm4.features.h.33.d554620bb17bd3b714c3fb5c268772bc
+                           .group:00000000 wm4._default_types.h.15.247e5cd201eca3442cbf5404108c4935
+                           .group:00000000 wm4._intsup.h.10.48bafbb683905c4daa4565a85aeeb264
+                           .group:00000000 wm4._stdint.h.10.c24fa3af3bc1706662bb5593a907e841
+                           .group:00000000 wm4.stdint.h.23.d53047a68f4a85177f80b422d52785ed
+                           .group:00000000 wm4.cmsis_version.h.32.4d5822004c01a829a975260e854b5f8e
+                           .group:00000000 wm4.core_cm3.h.66.fc46cac19810db8f98d67da7ef88f42c
+                           .group:00000000 wm4.cmsis_gcc.h.26.4f5798e999d5690b80e6ded3ecc94b37
+                           .group:00000000 wm4.core_cm3.h.127.f4474120f1a7524deb56f9d74ff175da
+                           .group:00000000 wm4.stm32f103xb.h.572.e8b8d889d857e2c56f82ca03c5328917
+                           .group:00000000 wm4.stm32f1xx.h.161.0d1b9fd26c53008e1116394047fa1b84
+ARM GAS  D:\TMP\cc6Iqxwj.s 			page 36
+
+
+                           .group:00000000 wm4.stm32_hal_legacy.h.22.738b126f6a0a0c726d412de79a56d7d7
+                           .group:00000000 wm4.stddef.h.39.0dc9006b34572d4d9cae4c8b422c4971
+                           .group:00000000 wm4.stm32f1xx_hal_def.h.56.354d0a4bf0f6ef7af10e3429b7628481
+                           .group:00000000 wm4.stm32f1xx_hal_rcc.h.93.3fadb58bdef0723b74d9eb798753b168
+                           .group:00000000 wm4.stm32f1xx_hal_rcc_ex.h.20.5a464c1dc9022dc2a67fe45b2054f77c
+                           .group:00000000 wm4.stm32f1xx_hal_rcc.h.1200.d6cbb5717f01cee373a6e1fba84d9163
+                           .group:00000000 wm4.stm32f1xx_hal_gpio.h.21.0099da253a68660e916195d3e8928be3
+                           .group:00000000 wm4.stm32f1xx_hal_gpio_ex.h.21.93f1f3ec7660fa76375def81b976f73c
+                           .group:00000000 wm4.stm32f1xx_hal_gpio.h.262.7df79220ec7519ba80c1763e6b4854a6
+                           .group:00000000 wm4.stm32f1xx_hal_exti.h.21.a7f1b393a0c9b2b56b72ccdbb8dee508
+                           .group:00000000 wm4.stm32f1xx_hal_dma.h.21.11e5a204ed6aa790b1cdae2e4192bc9d
+                           .group:00000000 wm4.stm32f1xx_hal_dma_ex.h.21.d438f745b4c04dc23f9f569190526864
+                           .group:00000000 wm4.stm32f1xx_hal_dma.h.408.14794a3f8621230c9ac7fca0cacf3e57
+                           .group:00000000 wm4.stm32f1xx_hal_cortex.h.21.bc6672975c96f16c12a031ce09248d54
+                           .group:00000000 wm4.stm32f1xx_hal_flash.h.20.2db7f614c43999568df8c1bd8d5f2459
+                           .group:00000000 wm4.stm32f1xx_hal_flash_ex.h.20.c1d01fb364bcc8befd238a2d45469cc1
+                           .group:00000000 wm4.stm32f1xx_hal_pwr.h.21.ec3e2cfd4c26fffa32fc4ff0a8ac7390
+                           .group:00000000 wm4.stm32f1xx_hal_tim.h.21.006a68e65b5f471fc08fe5e71aa2bc69
+                           .group:00000000 wm4.stm32f1xx_hal.h.87.60093b86a987865736d7cddecce3c235
+                           .group:00000000 wm4.main.h.60.0b6cd06f520117ebc07cd33ca052f0b6
+                           .group:00000000 wm4.car_control.h.20.de1f1452552bdfe0f37806aad624dec6
+                           .group:00000000 wm4.line_tracker.h.11.8de0c4215eb53fcb4db9d17c2d590b72
+
+UNDEFINED SYMBOLS
+__aeabi_fcmplt
+__aeabi_fcmple
+__aeabi_fcmpgt
+__aeabi_i2f
+__aeabi_fsub
+__aeabi_fadd
+__aeabi_fmul
+__aeabi_f2iz
+HAL_GPIO_WritePin
+LineTracker_Update
+htim1
+htim2
+htim3
+g_line
+HAL_TIM_Encoder_Start
+HAL_TIM_PWM_Start
+HAL_TIM_Base_Start_IT
+htim4
